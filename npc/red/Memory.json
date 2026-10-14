@@ -1,0 +1,35 @@
+{
+  "impression": "A first account is fragile; listen before it is polished.",
+  "relationships": {
+    "yellow": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Ivo marks uncertainty honestly, even when it costs him."
+    },
+    "white": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Elian listens to frightened people without pressing for a performance."
+    },
+    "blue": {
+      "trust": -0.5,
+      "social": 0.5,
+      "note": "Tomas wants a clean quote before a witness is ready."
+    },
+    "violet": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Leonie knows how easily an archive can erase someone."
+    }
+  },
+  "memories": [
+    "A source was harmed after Mara published an interview too soon.",
+    "Several pages of Mara's interview notes are missing from a packet left in the library."
+  ],
+  "habits": [
+    "listens before asking a second question",
+    "compares spoken accounts in the library"
+  ],
+  "version": 1,
+  "matches": []
+}

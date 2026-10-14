@@ -1,0 +1,35 @@
+{
+  "impression": "Ask what the door did before deciding what it means.",
+  "relationships": {
+    "yellow": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Ivo does not call every fault sabotage."
+    },
+    "white": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Elian treats people without asking whether they can pay."
+    },
+    "green": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Sera's map helps distinguish a shortcut from a forced entry."
+    },
+    "violet": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Leonie studies reflections; I study the latch beneath them."
+    }
+  },
+  "memories": [
+    "Nessa's repair shop supports her younger brother.",
+    "Someone signed an order for mansion lock work under a name Nessa does not recognize."
+  ],
+  "habits": [
+    "checks latches and hinges",
+    "uses plain words for a door's actual state"
+  ],
+  "version": 1,
+  "matches": []
+}

@@ -1,0 +1,35 @@
+{
+  "impression": "A possible route is not proof someone used it.",
+  "relationships": {
+    "yellow": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Ivo's clock times are useful only after checking which clock he read."
+    },
+    "violet": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Leonie tests a sight line instead of assuming it."
+    },
+    "copper": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Nessa can tell whether a door could really open that way."
+    },
+    "teal": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Basil's weather notes may explain marks near an entrance."
+    }
+  },
+  "memories": [
+    "A village council hired Sera to resolve a boundary dispute affecting access to a stream.",
+    "The official survey omitted a service path; Sera has started a new map."
+  ],
+  "habits": [
+    "walks routes twice",
+    "pauses at thresholds"
+  ],
+  "version": 1,
+  "matches": []
+}

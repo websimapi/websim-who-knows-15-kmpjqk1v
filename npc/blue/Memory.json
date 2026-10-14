@@ -1,0 +1,35 @@
+{
+  "impression": "A public story should survive a private question.",
+  "relationships": {
+    "red": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Mara protects sources so carefully she may withhold a useful detail."
+    },
+    "white": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Elian knows how to question without making a spectacle."
+    },
+    "violet": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Leonie can show where the camera could not see."
+    },
+    "teal": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Basil reports uncertainty without embarrassment."
+    }
+  },
+  "memories": [
+    "Tomas once aired an unverified accusation and corrected it too late.",
+    "A caretaker said the mansion's sale notice carried a false date, but Tomas has no recording."
+  ],
+  "habits": [
+    "listens where several conversations overlap",
+    "asks whether a claim can be attributed"
+  ],
+  "version": 1,
+  "matches": []
+}

@@ -1,0 +1,35 @@
+{
+  "impression": "Listen to the witness and the weather together.",
+  "relationships": {
+    "yellow": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Ivo records conflicting measurements instead of hiding them."
+    },
+    "green": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Sera knows where runoff changes the ground."
+    },
+    "blue": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Tomas might make a useful correction public."
+    },
+    "white": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Elian takes an uncertain account seriously."
+    }
+  },
+  "memories": [
+    "Basil once dismissed a neighbor's storm warning because his instruments disagreed.",
+    "An unsigned letter claims the mansion's old rain gauge was moved."
+  ],
+  "habits": [
+    "checks for drafts near doors",
+    "compares field notes with what people remember"
+  ],
+  "version": 1,
+  "matches": []
+}
