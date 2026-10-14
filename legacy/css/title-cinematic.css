@@ -1,0 +1,21 @@
+#title.title-film { isolation: isolate; background: #090d12; place-items: center start; padding: 3vw; }
+.title-film-stage { position: absolute; inset: 0; z-index: -2; overflow: hidden; background: #0c131d; pointer-events: none; }
+.title-film-stage canvas { display: block; width: 100%; height: 100%; }
+#title.title-film::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(90deg, rgba(3,6,10,.65), transparent 58%), linear-gradient(0deg, rgba(0,0,0,.45), transparent 15%, transparent 85%, rgba(0,0,0,.3)); }
+#title.title-film > .panel { width: min(370px, 39vw); max-height: 92vh; overflow-y: auto; touch-action: pan-y; background: rgba(9,12,16,.66); border-color: rgba(161,180,193,.22); border-radius: 4px; backdrop-filter: blur(5px); box-shadow: 0 15px 70px rgba(0,0,0,.3); }
+#title.title-film .panel h1 { font-size: clamp(1.7rem, 2.8vw, 2.3rem); }
+.title-film-sound { position: absolute; right: 24px; bottom: 24px; border: 1px solid rgba(203,212,223,.4); border-radius: 3px; background: rgba(7,12,18,.7); color: #d7dee8; padding: 10px 15px; font: 500 12px system-ui, sans-serif; letter-spacing: .06em; }
+.title-film-sound:hover, .title-film-sound:focus-visible { background: rgba(49,65,81,.85); border-color: #c8d2de; }
+#mobileStart { display: none; }
+@media (max-width: 720px) {
+  #title.title-film { place-items: end center; padding: 12px 12px max(12px, env(safe-area-inset-bottom)); }
+  #title.title-film > .panel { width: min(420px, 100%); max-height: 61vh; padding: 16px 18px 12px; gap: 9px; background: rgba(7,11,16,.78); }
+  #title.menu-open > .panel { display: flex; max-height: calc(100dvh - 24px); }
+  #title.title-film .panel h1 { font-size: 1.8rem; }
+  #title.title-film .sub { font-size: .68rem; }
+  #title > .panel { display: none; }
+  .title-film-sound { display: none; }
+  #mobileStart { display: block; position: absolute; z-index: 2; left: 50%; bottom: max(24px, calc(env(safe-area-inset-bottom) + 18px)); transform: translateX(-50%); min-width: 180px; min-height: 52px; border: 0; padding: 12px 24px; background: transparent; color: rgba(239,230,210,.92); text-shadow: 0 2px 12px #000; font: 600 .78rem system-ui, sans-serif; letter-spacing: .28em; text-transform: uppercase; animation: mobile-start-pulse 1.8s ease-in-out infinite; cursor: pointer; }
+  #title.menu-open #mobileStart { display: none; }
+}
+@keyframes mobile-start-pulse { 0%, 100% { opacity: .42; } 50% { opacity: 1; } }
