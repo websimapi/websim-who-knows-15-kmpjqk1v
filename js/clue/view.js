@@ -259,9 +259,14 @@ export class View {
       const listenYaw = conversing && s ? Math.max(-1.15, Math.min(1.15, Math.atan2(Math.sin(conversationYaw - bodyYaw), Math.cos(conversationYaw - bodyYaw)))) : 0;
       const listenPitch = conversing ? Math.max(-.28, Math.min(.28, Math.atan2((partner.seat ? 1.15 : 1.62) - (s ? 1.15 : 1.62), Math.max(.3, Math.hypot(partner.x - x, partner.z - z))))) : 0;
       const face = !acting ? yaw : id === cut.killer ? Math.atan2(cut.x - cut.kx, cut.z - cut.kz) : Math.atan2(cut.kx - cut.x, cut.kz - cut.z);
+      // Exterior gusts; sheltered rooms have only a light draft. Actual movement
+      // contributes relative airflow through world-space particle velocity.
+      const outside = !roomAtWorld(x,z) && !underground(z);
+      const windSpeed = outside ? 2.6 : .16;
+      const wind = [windSpeed*.9, 0, windSpeed*.35];
       a.update(dt, { x: acting ? cx : s ? s.x : x, z: acting ? cz : s ? s.z : z, yaw: acting ? face : bodyYaw,
         mv: acting ? 0 : row[16] ? 0 : mv, alive: acting ? true : !!alive, anim: acting ? 0 : row[16] ? 0 : anim,
-        seat: acting ? false : !!s, seatH: s?.h, pitch: acting ? 0 : row[16] ? 0 : pitch || 0, ko: acting ? false : !!row[16], conversing, listenYaw, listenPitch }, snapAll || !!acting);
+        seat: acting ? false : !!s, seatH: s?.h, pitch: acting ? 0 : row[16] ? 0 : pitch || 0, ko: acting ? false : !!row[16], conversing, listenYaw, listenPitch, wind }, snapAll || !!acting);
       if (!acting && alive && !row[16]) a.poseCarry(!!row[10], !!row[13], !!row[10] && row[10] === row[13]);
       if (!acting && anim === 'dart' && alive && !row[16]) a.poseThrow();
       else if (!acting && alive && !row[16] && ['bathroom','defrag','lettuce','paint','books','papers','clock','music'].includes(anim)) a.poseWork(anim);
