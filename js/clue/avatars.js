@@ -6,6 +6,8 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 import { HairMotion } from "./hair-motion.js";
 import { BlinkMotion } from "./blink-motion.js";
+import { Haircuts } from "./haircuts.js";
+import { addFallbackHair } from "./fallback-hair.js";
 
 let kitPromise = null;
 function prepareKit(gltf, authored = false) {
@@ -103,10 +105,11 @@ export class Avatar {
     this.root = new THREE.Group();
     this.model = SkeletonUtils.clone(kit.scene);
     this.model.scale.setScalar(0.98);
-    this.mats = dress(this.model, suspect.color);
     this.root.add(this.model);
     this.bones = {};
     this.model.traverse((o) => { if (o.isBone) this.bones[o.name.replace("mixamorig", "").replace(":", "")] = o; });
+    if(!kit.authored)addFallbackHair(this.model,this.bones,suspect.id);
+    this.mats = dress(this.model, suspect.color);
     this.mixer = new THREE.AnimationMixer(this.model);
     this.acts = {};
     for (const n of ["idle", "walk", "run"]) {
@@ -122,7 +125,8 @@ export class Avatar {
       a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = false;
       this.acts[n] = a;
     }
-    this.hairMotion = kit.authored ? new HairMotion(this.model, this.bones) : null;
+    this.hairMotion = new HairMotion(this.model, this.bones);
+    this.haircuts = new Haircuts(this.model,this.hairMotion);
     this.blink = kit.authored ? new BlinkMotion(this.model) : null;
     this.speed = 0;
     this.ghost = false;
@@ -140,6 +144,8 @@ export class Avatar {
     if (on === this.ghost) return;
     this.ghost = on;
     this.mats = dress(this.model, this.color, on);
+    this.hairMotion?.refreshMaterials();
+    this.haircuts?.refresh();
   }
   // Hide/show the head (first-person viewers would see inside it).
   hideHead(on) {
@@ -276,6 +282,7 @@ export class Avatar {
     this.root.updateMatrixWorld(true);
     if (wind !== undefined) this.hairMotion?.setWind(wind);
     this.hairMotion?.update(dt, snap);
+    this.haircuts?.update(dt);
   }
   get down() { return (this.koT || 0) > 0.5; }
 }
@@ -287,11 +294,14 @@ export class Corpse {
     this.root = new THREE.Group();
     this.model = SkeletonUtils.clone(kit.scene);
     this.model.scale.setScalar(0.98);
-    dress(this.model, suspect.color);
     const mixer = new THREE.AnimationMixer(this.model);
     const a = mixer.clipAction(kit.clips.idle); a.play(); mixer.update(0.1);
     const bones = {};
     this.model.traverse((o) => { if (o.isBone) bones[o.name.replace("mixamorig", "").replace(":", "")] = o; });
+    if(!kit.authored)addFallbackHair(this.model,bones,suspect.id);
+    dress(this.model,suspect.color);
+    this.hairMotion=new HairMotion(this.model,bones);
+    this.haircuts=new Haircuts(this.model,this.hairMotion);
     this.model.updateMatrixWorld(true);
     // Sprawled: one knee bent, arms out.
     bendBone(this.model, bones.LeftUpLeg, -0.5); bendBone(this.model, bones.LeftLeg, 0.9);
