@@ -3,7 +3,7 @@
 import * as THREE from "three";
 import { propMesh } from "./props3d.js";
 import { loadKit, Avatar } from "./avatars.js";
-import { SUSPECT_BY_ID, WEAPON_BY_ID, CELL, COLS, GRID, DUNGEON, DROW, DH, ROOMS, DOORS, HATCHES } from "./data.js";
+import { SUSPECT_BY_ID, BUTLER, WEAPON_BY_ID, CELL, COLS, GRID, DUNGEON, DROW, DH, ROOMS, DOORS, HATCHES } from "./data.js";
 import { ROOM_BOUNDS, PROP_RADIUS, FURNITURE } from "./layout.js";
 
 const cache = new Map();
@@ -219,10 +219,10 @@ function roomImage(id) {
 }
 
 async function guestImage(id, ghost) {
-  const suspect = SUSPECT_BY_ID[id];
-  const kit = await loadKit();
+  const suspect = id==='butler'?BUTLER:SUSPECT_BY_ID[id];
+  const kit = await loadKit([id]);
   // Authored guests must show their actual replacement model, never a fallback robot.
-  if (["blue", "violet", "white", "green"].includes(id) && !kit.variants?.[id]) throw new Error("Character model unavailable: " + id);
+  if (["blue", "violet", "white", "green", "red", "yellow", "copper", "teal", "butler"].includes(id) && !kit.variants?.[id]) throw new Error("Character model unavailable: " + id);
   const scene = studioScene();
   const avatar = new Avatar(kit, suspect);
   avatar.update(0.15, { x: 0, z: 0, yaw: 0, mv: 0, alive: !ghost, anim: null, seat: null }, true);
@@ -230,7 +230,7 @@ async function guestImage(id, ghost) {
   const camera = new THREE.PerspectiveCamera(30, 320 / 440, 0.1, 30);
   camera.position.set(0, 1.12, 4.1);
   camera.lookAt(0, 0.95, 0);
-  return snapshot(scene, camera, 320, 440);
+  try{return snapshot(scene, camera, 320, 440);}finally{avatar.dispose();renderer?.renderLists.dispose();}
 }
 
 export async function manualImage(key) {

@@ -161,15 +161,9 @@ a sphere approximation for loose props, not a full convex rigid-body solver.
 The title background runs its autonomous match in **Only Human Avatars** mode.
 When showing a live lobby, its display snapshot also renders all guest seats as
 humans. This presentation override does not change the watched match or the
-local/online avatar setting; the butler retains its robot design.
+local/online avatar setting. The butler uses his human model in humans mode and his robot model in mixed/robots mode.
 
-Seven anatomical heads have a further continuous portrait sculpt across the
-jaw, cheek, chin, nose and mouth, preserving the repaired neck joins and fitted
-eye rigs. Tomas retains his separately sourced scanned head. Hair palettes are
-chestnut (Tomas), auburn (Leonie), silver (Elian), warm brown (Sera), espresso
-(Mara), sandy gold (Ivo), cool black (Nessa), and ash brown (Basil). These are art
-direction choices informed by occupation/personality, not physical descriptions
-claimed to be present in the soul files.
+All nine human heads use individual continuous face sculpts, skin textures and native eye meshes. Tomas now uses a compatible anatomical head rather than the historical scan. Hair palettes are chestnut (Tomas), black (Leonie), silver (Elian), dark natural curls (Sera), espresso waves (Mara), sandy ginger curls (Ivo), subtle auburn coils (Nessa), dark ash (Basil), and silver (Grimsby). Authored appearance notes now live in each soul file; existing behavior and stats are unchanged.
 
 Basil's shoulder tabs now drape onto the jacket and inherit local shoulder
 weights. His barometer and Ivo's watch are fitted as complete rigid assemblies,
@@ -188,3 +182,32 @@ actual speech samples. Device utterances stay strongly referenced until their
 completion; audio-URL mouth amplitude adapts to quieter voices. Speech remains
 an approximate text-viseme system gated by actual playback, not exact phoneme
 alignment.
+
+### Human cast and runtime repair pass
+
+- Nine distinct human guests, including Mr. Grimsby: individual facial proportions, diverse complexions, authored soul appearance notes and different hair styles. The production heads, native viseme targets, skins, dental arches and tongue use the CC0 MakeHuman assets; no scan permission is required for the replacement Tomas head.
+- Fifteen mouth targets deform the head, teeth/gums and tongue together. Native speech starts animation on actual speech start; text timing advances even when a browser omits word boundaries. Audio amplitude gates speech when Websim audio is available. This is estimated text/audio timing, not phoneme alignment.
+- Fitted v3 cuttable grooms, reduced simulation guides, stable surviving-strand momentum and local bun-core cutting. Short stubble follows the scalp. Distant hair updates less frequently.
+- Human files are prepared one at a time after the robot kit before Play; the title always uses humans without altering lobby settings. Matching mesh pieces share one skeleton; preview and help portrait clones release their instance resources. Assets use meshopt and WebP.
+- Shared body collision uses short movement steps and constrained gentle displacement on the host and local prediction. Living upright guests and the butler occupy space; seated and conversing guests remain anchored. Ghosts and unconscious floor bodies do not act as upright blockers. This adds no shove action.
+- Help portraits render the current actual meshes on demand. Avatar modes retain their existing meaning: robots, mixed (default), humans; AI seats remain AI in every mode. Grimsby uses his human form in humans mode.
+
+Source project and unpublished review renders are kept separately from the served game. Visual review and measured frame performance are required before this candidate is promoted.
+
+- Follow-up review fixes: fitted textured CC0 native eye meshes replace the separate globe/iris primitives; animated mesh culling uses conservative bounds; eight fixed room-light slots prevent shader variants from recompiling when nearby light counts change. Adaptive resolution also responds below 10 FPS. These changes require review in the next candidate.
+
+### Startup readiness and fiber antialiasing
+
+The initial loading screen now shows progress through all nine human assets, decoded textures, shader compilation and four small first-view GPU draws. Play is enabled after this preparation completes. Robot and human avatar instances are retained in a bounded per-seat pool, so switching from the title's human showcase to a mixed/robot match does not rebuild all rigs and haircut paths. This deliberately performs fixed-asset work before play. TTS, generated paintings, network traffic and other future content remain asynchronous.
+
+Hair fibers use a stable minimum screen footprint with coverage preserved through MSAA alpha-to-coverage, soft ribbon edges, rougher highlights and reduced environment sparkle. No temporal noise/dithering is added. Strand IDs, wind/movement guides and haircut authorization/state are unchanged. The effect needs an antialiased WebGL framebuffer for fractional sample coverage; reflection or devices without MSAA may show a coarser edge.
+
+Readiness and preparation duration are exposed through the game's body data attributes (`assetReadiness`, `preparedHumans`, `preparationMs`) for visual performance review. Smoothness remains dependent on device and scene complexity; these changes do not promise a frame rate on every device.
+
+Props that begin exactly supported by a floor or furniture surface now start asleep, instead of forcing the full untouched scene through gravity/collision settling on the first gameplay ticks. Unsupported objects remain awake and fall normally. Dropping, throwing, moving a support and walking into loose objects still wake them.
+
+The hair shader also derives a smooth tangent along each ribbon and shades it with a view-facing cylindrical-fiber normal. This aligns highlights along the groom instead of highlighting randomly rotated flat ribbon faces. It is a practical cylinder approximation, not the full Marschner scattering/self-shadow model. It adds two small cached geometry attributes and keeps the existing guide/cutting geometry.
+
+Implementation references: [Three.js r160 compilation and texture initialization](https://raw.githubusercontent.com/mrdoob/three.js/r160/src/renderers/WebGLRenderer.js), [Three.js opaque output alpha](https://raw.githubusercontent.com/mrdoob/three.js/r160/src/renderers/shaders/ShaderChunk/opaque_fragment.glsl.js), and [NVIDIA hair geometry, guide dynamics and fiber rendering discussion](https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-23-hair-animation-and-rendering-nalu-demo).
+
+The ribbon renderer now faces each fiber toward the camera around its simulated centerline. It uses the physical width rather than the vanishing projected width of an edge-on flat card, with a small minimum coverage for distant fibers. This removes another cause of grainy on/off flashes while preserving the simulated strand center, cut length and body clearance.

@@ -9,9 +9,9 @@ import { losClear, DOOR_LIST, DOOR_SWING } from "./nav.js";
 import { buildMansion } from "./mansion3d.js";
 import { buildDungeon, buildTrapdoors } from "./dungeon3d.js";
 import { buildLandscape } from "./landscape.js";
-import { propMesh, tintItem } from "./props3d.js";
+import { propMesh, tintItem, seatPropMesh } from "./props3d.js";
 import { Blood } from "./blood3d.js";
-import { loadKit, Avatar, Corpse, chalkOutline } from "./avatars.js";
+import { loadKit, loadHumanVariant, Avatar, Corpse, chalkOutline } from "./avatars.js";
 import { computeVis, uploadVis, visAt, patchTree, FOW_UNIFORMS } from "./fow.js";
 import { sfx, setUnderground, setExteriorRain } from "./audio.js";
 import { loadGraphics, resolveGraphics } from "./graphics.js";
@@ -19,10 +19,13 @@ import { buildTaskObjects } from './tasks3d.js';
 import { butlerTools } from './butler3d.js';
 import { BALL_R } from './physics.js';
 import { burnVisual, AshPiles } from './burn3d.js';
+import {illuminationAt,snapshotLighting,fixtureOn} from './lighting.js';
+import {humanAvatar} from './avatar-policy.js';
 
 const SEAT_BY_ID = Object.fromEntries(SEATS.map((s) => [s.id, s]));
 const W = COLS * CELL, D = ROWS * CELL;
 const tmp = new THREE.Vector3();
+const avatarFrustum=new THREE.Frustum(),avatarProjection=new THREE.Matrix4(),avatarSphere=new THREE.Sphere(new THREE.Vector3(),1.6);
 
 const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x020203 });
 
@@ -114,13 +117,13 @@ export class View {
   }
 
   adaptResolution(dt) {
-    if (!this.graphics.adaptive || document.hidden || dt <= 0 || dt >= 0.09) return;
+    if (!this.graphics.adaptive || document.hidden || dt <= 0) return;
     this.scaleTime += dt;
     this.scaleFrames++;
     if (this.scaleTime < 2) return;
     const average = this.scaleTime / this.scaleFrames;
     const floor = Math.min(this.q.ratio, Math.max(0.65, this.q.ratio * 0.62));
-    const next = average > 1 / 43 ? Math.max(floor, this.pixelRatio - 0.1)
+    const next = average > 1 / 43 ? Math.max(floor, this.pixelRatio - (average>1/20?.2:.1))
       : average < 1 / 57 ? Math.min(this.q.ratio, this.pixelRatio + 0.05) : this.pixelRatio;
     if (Math.abs(next - this.pixelRatio) > 0.01) {
       this.pixelRatio = next;
@@ -132,6 +135,9 @@ export class View {
   async init() {
     const m = buildMansion(this.q);
     this.mansion = m;
+    // Keep a fixed light count. Showing/hiding source lamps changed the shader
+    // variant as the camera walked, causing expensive recompiles mid-game.
+    this.roomLightSlots=Array.from({length:8},()=>{const light=new THREE.PointLight(0xffffff,0,1,2);light.castShadow=false;this.scene.add(light);return light;});
     this.scene.add(m.root);
     // The first-person camera hides its avatar's head. Restore it only while
     // a mirror captures the scene so the player sees their complete reflection.
@@ -155,14 +161,15 @@ export class View {
     this.taskObjects = buildTaskObjects(); this.scene.add(this.taskObjects.root);
     this.ashPiles = new AshPiles(this.scene);
     this.land = buildLandscape(this.scene, { moonDir: m.moon.position.clone() });
-    this.kit = await loadKit();
+    this.kit = await loadKit([]);
+    this.humanLoads=new Set();this.humanLoadQueue=Promise.resolve();this.avatarPool=new Map();
     for (const s of SUSPECTS) {
-      const a = new Avatar(this.kit, s);
+      const a = new Avatar(this.kit, s,{humanForm:false});
       this.scene.add(a.root);
-      this.avatars.set(s.id, a);
+      this.avatars.set(s.id, a);this.avatarPool.set(s.id,{robot:a});
     }
-    this.butlerAv = new Avatar(this.kit, BUTLER);
-    this.butlerTools = butlerTools(this.butlerAv.root);
+    this.butlerAv = new Avatar(this.kit, BUTLER,{humanForm:false});
+    this.butlerTools = butlerTools(this.butlerAv.root);this.butlerAv.tools=this.butlerTools;this.avatarPool.set('butler',{robot:this.butlerAv});
     this.butlerAv.root.visible = false;
     this.scene.add(this.butlerAv.root);
     const list = [...PROPS, ...WEAPONS.map((w) => ({ id: w.id, kind: w.id, core: w.core, weapon: true, r: PROP_RADIUS[w.id] }))];
@@ -173,9 +180,14 @@ export class View {
       this.scene.add(g);
       this.props.set(p.id, g);
     }
+    this.deskLamps=[];
+    for(const [id,g]of this.props)if(g.userData.p.kind==='lamp'){
+      const light=new THREE.PointLight(0xffd0a0,8,7,2);this.scene.add(light);light.userData={base:8,control:'prop:'+id,room:g.userData.p.room,phase:0};this.mansion.lights.push(light);this.deskLamps.push({id,light,g});
+      g.traverse(o=>{if(o.isMesh&&o.material?.emissive){o.material=o.material.clone();this.mansion.controlledMaterials.push({material:o.material,control:'prop:'+id,color:o.material.color.clone(),emissive:o.material.emissiveIntensity||0});}});
+    }
     this.blood = new Blood(this.scene);
     // Lower env reflections everywhere; patch every world material for fog of war.
-    this.scene.traverse((o) => { if (o.material && !Array.isArray(o.material) && o.material.isMeshStandardMaterial) o.material.envMapIntensity = o.material.userData.floorSheen ? 0.5 : o.material.metalness > 0.5 ? 0.6 : 0.12; });
+    this.scene.traverse((o) => { if (o.material && !Array.isArray(o.material) && o.material.isMeshStandardMaterial) o.material.envMapIntensity = o.material.userData.floorSheen ? 0.14 : o.material.metalness > 0.5 ? 0.6 : 0.12; });
     patchTree(this.scene);
     // The tunnels (no env reflections down there) and the trapdoors upstairs.
     this.dungeon = buildDungeon();
@@ -235,6 +247,46 @@ export class View {
   }
   setFlicker(on) { this.flicker = on; if (!on) this.blackout = 0; }
 
+  preparedAvatar(id,humanForm){
+    const pool=this.avatarPool.get(id),key=humanForm?'human':'robot';
+    if(!pool[key]){const avatar=new Avatar(this.kit,id==='butler'?BUTLER:SUSPECT_BY_ID[id],{humanForm});patchTree(avatar.root);avatar.root.visible=false;this.scene.add(avatar.root);if(id==='butler')avatar.tools=butlerTools(avatar.root);pool[key]=avatar;}
+    return pool[key];
+  }
+  async prepareGuests(progress=()=>{}){
+    const pause=()=>new Promise(resolve=>{const channel=new MessageChannel();channel.port1.onmessage=()=>{channel.port1.close();channel.port2.close();resolve();};channel.port2.postMessage(null);}),ids=[...SUSPECTS.map(s=>s.id),'butler'],started=performance.now();
+    document.body.dataset.assetReadiness='loading';
+    for(let i=0;i<ids.length;i++){
+      const id=ids[i];progress(`Loading ${id==='butler'?BUTLER.name:SUSPECT_BY_ID[id].name} · ${i+1}/${ids.length}`);
+      const variant=await loadHumanVariant(this.kit,id);if(!variant)throw new Error('Could not prepare '+id);
+      this.preparedAvatar(id,true);await pause();
+    }
+    this.applyGraphics(this.graphics);
+    progress('Preparing textures…');
+    const textures=new Set();this.scene.traverse(o=>{for(const m of Array.isArray(o.material)?o.material:o.material?[o.material]:[])for(const value of Object.values(m))if(value?.isTexture)textures.add(value);});
+    for(const texture of textures){this.renderer.initTexture(texture);await pause();}
+    // The same twelve local point lights and indoor shadow layout used in play.
+    for(const light of this.mansion.lights)light.visible=false;this.mansion.moon.castShadow=false;
+    const camera=new THREE.PerspectiveCamera(70,1,.06,500);camera.position.set(0,1.6,4);camera.lookAt(0,1.0,0);camera.updateMatrixWorld();
+    progress('Preparing house lighting…');await this.renderer.compileAsync(this.scene,camera);await pause();
+    const wasTarget=this.renderer.getRenderTarget(),wasScissor=this.renderer.getScissorTest(),wasViewport=this.renderer.getViewport(new THREE.Vector4()),wasCanvasVisibility=this.renderer.domElement.style.visibility;this.renderer.domElement.style.visibility='hidden';
+    const visible=[];for(const pool of this.avatarPool.values())for(const avatar of Object.values(pool)){visible.push([avatar,avatar.root.visible]);avatar.root.visible=true;avatar.update(0,{x:0,z:0,yaw:0,mv:0,alive:true},true);}
+    const mirrors=this.mansion.mirrors.map(m=>[m,m.visible]);for(const [mirror]of mirrors)mirror.visible=false;
+    try{
+      this.renderer.setScissorTest(false);this.renderer.setRenderTarget(null);this.renderer.setViewport(0,0,48,48);
+      for(let i=0;i<4;i++){progress(`Preparing first views · ${i+1}/4`);const angle=i*Math.PI/2;camera.position.set(Math.sin(angle)*4,1.6,Math.cos(angle)*4);camera.lookAt(0,1,0);this.renderer.clear();this.renderer.render(this.scene,camera);await pause();}
+    }finally{
+      for(const [avatar,show]of visible){avatar.root.visible=show;if(avatar!==this.avatars.get(avatar.id)&&avatar!==this.butlerAv)avatar.root.removeFromParent();}for(const [mirror,show]of mirrors)mirror.visible=show;this.renderer.setRenderTarget(wasTarget);this.renderer.setScissorTest(wasScissor);this.renderer.setViewport(wasViewport);this.renderer.domElement.style.visibility=wasCanvasVisibility;
+    }
+    document.body.dataset.preparedPrograms=String(this.renderer.info.programs.length);document.body.dataset.preparedGeometries=String(this.renderer.info.memory.geometries);document.body.dataset.preparedTextures=String(this.renderer.info.memory.textures);
+    document.body.dataset.assetReadiness='ready';document.body.dataset.preparedHumans=String(ids.length);document.body.dataset.preparationMs=String(Math.round(performance.now()-started));
+  }
+
+  queueHuman(id){
+    if(this.humanLoads.has(id)||this.kit.variants[id])return;
+    this.humanLoads.add(id);
+    // Fallback for a later asset request; normal startup prepares the full cast.
+    this.humanLoadQueue=this.humanLoadQueue.then(()=>loadHumanVariant(this.kit,id)).catch(error=>console.warn('Human preload failed',id,error));
+  }
   // Apply a snapshot (match.snapshot() shape).
   apply(snap, dt, snapAll = false) {
     this.snap = snap;
@@ -244,8 +296,18 @@ export class View {
     const cut = this.cutStage && this.time - this.cutStage.t0 < this.cutStage.dur ? this.cutStage : null;
     for (const row of snap.chars) {
       const [id, x, z, yaw, mv, alive, , anim, , seat, , , pitch] = row;
-      const a = this.avatars.get(id);
+      let a = this.avatars.get(id);
       if (!a) continue;
+      const wantsHuman=humanAvatar(snap.avatarMode||'mixed',id,snap.humanIds||[]);
+      if(wantsHuman)this.queueHuman(id);
+      const humanForm=wantsHuman&&!!this.kit.variants[id];
+      if(a.humanForm!==humanForm){
+        a.root.visible=false;a.root.removeFromParent();a=this.preparedAvatar(id,humanForm);this.scene.add(a.root);this.avatars.set(id,a);
+      }
+      a.awaitingHuman=wantsHuman&&!humanForm;
+      a.haircuts?.apply(snap.haircuts?.[id]);
+      const nearest=Math.min(...this.views.map(v=>{const eye=this.rows.get(v.follow);return eye?Math.hypot(x-eye[1],z-eye[2]):v.cam.position.distanceTo(a.root.position);}));
+      a.hairMotion&&(a.hairMotion.detail=nearest<5?1:nearest<12?.5:nearest<22?.2:0);
       const s = seat ? SEAT_BY_ID[seat] : null;
       const acting = !!cut && (id === cut.killer || id === cut.victim);
       const cx = acting ? id === cut.killer ? cut.kx : cut.x : x;
@@ -273,20 +335,25 @@ export class View {
     }
     const bt = snap.butler;
     if (this.butlerAv) {
-      if (bt) { this.butlerAv.update(dt, { x: bt[0], z: bt[1], yaw: bt[2], mv: bt[3], alive: true, anim: bt[6], seat: false }, snapAll || !this.butlerSeen); this.butlerTools(bt[4]); }
+      const wantsHuman=humanAvatar(snap.avatarMode||'mixed','butler',snap.humanIds||[]);
+      if(wantsHuman)this.queueHuman('butler');
+      const humanForm=wantsHuman&&!!this.kit.variants.butler;
+      if(this.butlerAv.humanForm!==humanForm){this.butlerAv.root.visible=false;this.butlerAv.root.removeFromParent();this.butlerAv=this.preparedAvatar('butler',humanForm);this.scene.add(this.butlerAv.root);this.butlerTools=this.butlerAv.tools;}
+      this.butlerAv.awaitingHuman=wantsHuman&&!humanForm;
+      if (bt) { this.butlerAv.haircuts?.apply(snap.haircuts?.butler); this.butlerAv.update(dt, { x: bt[0], z: bt[1], yaw: bt[2], mv: bt[3], alive: true, anim: bt[6], seat: false,wind:[.14,0,.06] }, snapAll || !this.butlerSeen); this.butlerTools(bt[4]); }
       this.butlerSeen = !!bt;
     }
     // Props: rows only include moving/held ones except periodic full lists.
     this.carried = new Set(snap.chars.flatMap((r) => [r[10], r[13]]).filter(Boolean));
     if (snap.ashes) this.ashPiles.update(snap.ashes);
-    for (const [id, x, y, z, yaw, roll, hidden, , , flags, burnt] of snap.props || []) {
+    for (const [id, x, y, z, yaw, roll, hidden, , , flags, burnt, , , , , , asleep] of snap.props || []) {
       let g = this.props.get(id);
       if (!g && typeof id === "string" && id.startsWith("i_")) g = this.addItemMesh(id);
       if (!g) continue;
       tintItem(g, flags || 0);
       burnVisual(g, flags || 0, burnt || 0, this.time);
       if (g.userData.torch) g.userData.lit = !!((flags || 0) & 4);
-      g.userData.target = { x, y, z, yaw, roll, hidden: !!hidden };
+      g.userData.target = { x, y, z, yaw, roll, hidden: !!hidden,asleep:!!asleep };
       if (!g.userData.placed || snapAll) { g.position.set(x, y, z); g.userData.placed = true; }
     }
     for (const [id, g] of this.props) {
@@ -302,6 +369,7 @@ export class View {
         g.userData.inner.rotation.x = held ? 0 : Math.PI / 2;
         g.userData.inner.position.y = held ? 0 : 0.02;
       }
+      if(t.asleep&&!this.carried.has(id))seatPropMesh(g,g.userData.p?.r||.08);
     }
     // Held things follow skinned hands, including cleaning tools and task props.
     const xAxis = new THREE.Vector3(1, 0, 0);
@@ -361,6 +429,7 @@ export class View {
       if (this.cleared.has(victim)) continue;
       const old = this.corpses.get(victim);
       if (old) {
+        old.haircuts?.apply(snap.haircuts?.[victim]);
         old.hidden = !!hidden;
         // Dragged bodies slide along behind the killer.
         const k = Math.min(1, dt * 8), r = old.root;
@@ -369,7 +438,8 @@ export class View {
         r.rotation.y += Math.atan2(Math.sin((yaw || 0) - r.rotation.y), Math.cos((yaw || 0) - r.rotation.y)) * k;
         continue;
       }
-      const c = new Corpse(this.kit, SUSPECT_BY_ID[victim]);
+      const c = new Corpse(this.kit, SUSPECT_BY_ID[victim],{humanForm:humanAvatar(snap.avatarMode||'mixed',victim,snap.humanIds||[])});
+      c.haircuts?.apply(snap.haircuts?.[victim]);
       c.hidden = !!hidden;
       c.root.position.set(x, 0, z); c.root.rotation.y = yaw || 0;
       if (victim !== cut?.victim && (found || snapAll || this.time < 1)) c.tick(0, true);
@@ -537,15 +607,19 @@ export class View {
     for (const p of m.pendulums) p.rotation.z = Math.sin(t * Math.PI) * 0.16;
     // Lights: flicker during the dark phase, blackout as the deed is done, lightning outside.
     this.blackout = Math.max(0, this.blackout - dt);
+    for(const {light,g}of this.deskLamps||[]){light.position.copy(g.position);light.position.y+=.3;light.userData.room=roomAtWorld(g.position.x,g.position.z);light.userData.hidden=!g.visible;}
+    for(const fixture of m.controlledMaterials||[]){const on=fixtureOn(this.snap?.lightsOff,fixture.control)&&this.blackout<=.9;fixture.material.color.copy(fixture.color).multiplyScalar(on?1:.10);if(fixture.material.emissive)fixture.material.emissiveIntensity=on?fixture.emissive:0;}
+    for(const sw of m.switches||[])if(sw.rocker)sw.rocker.rotation.x=this.snap?.lightsOff?.[sw.id] ? .13 : -.13;
     for (const l of m.lights) {
       const u = l.userData;
       let k = 1;
       if (this.flicker) { const n = Math.sin(t * 23 + u.phase) * Math.sin(t * 7.7 + u.phase * 2) + Math.sin(t * 41 + u.phase * 3) * 0.4; k = n > 0.55 ? 0.05 : 0.45 + n * 0.3; }
       if (this.blackout > 0) k = this.blackout > 0.9 ? 0 : 0.2 * (1 - this.blackout / 0.9) + 0.1;
+      if(!fixtureOn(this.snap?.lightsOff,u.control)||u.hidden)k=0;
       l.intensity = u.base * k;
       u.k = k;
     }
-    for (const sp of m.glowSprites) { const gl = sp.userData; const k = this.flicker || this.blackout > 0 ? (m.lights.find((l) => l.userData.room === gl.room)?.userData.k ?? 1) : 1; sp.material.opacity = 0.5 * k + Math.random() * 0.03; }
+    for (const sp of m.glowSprites) { const gl = sp.userData; const k = this.flicker || this.blackout > 0 ? (m.lights.find((l) => l.userData.room === gl.room)?.userData.k ?? 1) : 1; sp.material.opacity = fixtureOn(this.snap?.lightsOff,gl.control||'room:'+gl.room)?0.5*k:0; }
     this.lightningT -= dt;
     if (this.lightningT <= 0) { this.lightningT = 18 + Math.random() * 30; this.flash = 1; if (this.views[0]?.mode !== "title" || Math.random() < 0.5) setTimeout(() => sfx("thunder", 0.5), 600 + Math.random() * 1500); }
     this.flash = Math.max(0, this.flash - dt * 2.4);
@@ -626,18 +700,26 @@ export class View {
     // fragment work even when their attenuation makes them invisible.
     const lightOrigin = xr ? this.xrRig.position : v.cam.position;
     const lamps = indoor
-      ? new Set([...m.lights].sort((a, b) => a.position.distanceToSquared(lightOrigin) - b.position.distanceToSquared(lightOrigin)).slice(0, 8))
+      ? new Set([...m.lights].filter(l=>l.intensity>0&&(l.userData.room===roomAtWorld(lightOrigin.x,lightOrigin.z)||losClear(lightOrigin.x,lightOrigin.z,l.position.x,l.position.z,this.snap?.doors||[]))).sort((a, b) => a.position.distanceToSquared(lightOrigin) - b.position.distanceToSquared(lightOrigin)).slice(0, 8))
       : null;
-    for (const lamp of m.lights) lamp.visible = !lamps || lamps.has(lamp);
+    const selected=lamps?[...lamps]:[...m.lights].sort((a,b)=>a.position.distanceToSquared(lightOrigin)-b.position.distanceToSquared(lightOrigin)).slice(0,8);
+    for(const lamp of m.lights)lamp.visible=false;
+    this.roomLightSlots.forEach((slot,i)=>{const source=selected[i];slot.intensity=source?.intensity||0;if(source){slot.position.copy(source.position);slot.color.copy(source.color);slot.distance=source.distance;slot.decay=source.decay;}});
     const useFow = indoor && living && me;
     let vis = null;
     if (useFow) {
       const a = this.avatars.get(v.follow).root.position;
-      vis = computeVis(v.fow, a.x, a.z, this.snap?.doors || DOOR_LIST.map(() => 0));
+      const lightState=snapshotLighting(this.snap,this.props);
+      vis = computeVis(v.fow, a.x, a.z, this.snap?.doors || DOOR_LIST.map(() => 0),false,(x,z)=>illuminationAt(x,z,lightState),JSON.stringify(this.snap?.lightsOff||{})+Math.floor(this.time*3));
     }
     uploadVis(vis);
     FOW_UNIFORMS.fowOn.value = vis ? 1 : 0;
     v.vis = vis;
+    // Cull complete upright bodies in world metres. Per-mesh bind-space
+    // bounds are unreliable for exported skinned meshes and can hide faces.
+    v.cam.updateMatrixWorld();avatarProjection.multiplyMatrices(v.cam.projectionMatrix,v.cam.matrixWorldInverse);avatarFrustum.setFromProjectionMatrix(avatarProjection);
+    const nearMirror=xr||m.mirrors.some(mirror=>mirror.getWorldPosition(tmp).distanceTo(lightOrigin)<7);
+    const inCamera=actor=>{avatarSphere.center.set(actor.root.position.x,.95,actor.root.position.z);return nearMirror||avatarSphere.center.distanceToSquared(lightOrigin)<9||avatarFrustum.intersectsSphere(avatarSphere);};
     // Who can be seen.
     const viewerGhost = me && !me.alive;
     for (const [id, a] of this.avatars) {
@@ -647,9 +729,9 @@ export class View {
       if (!p.alive) show = viewerGhost || v.mode === "title" || this.snap?.ph === "over";
       if (show && vis && id !== v.follow) show = visAt(vis, a.root.position.x, a.root.position.z) > 0.5;
       if (v.mode === "table" && !p.alive) show = false;
-      a.root.visible = show;
+      a.root.visible = show && inCamera(a) && !(v.mode==="title"&&a.awaitingHuman);
     }
-    if (this.butlerAv) this.butlerAv.root.visible = !!this.snap?.butler && v.mode !== "table" && (!vis || visAt(vis, this.butlerAv.root.position.x, this.butlerAv.root.position.z) > 0.5);
+    if (this.butlerAv) this.butlerAv.root.visible = !!this.snap?.butler && inCamera(this.butlerAv) && !(v.mode==="title"&&this.butlerAv.awaitingHuman) && v.mode !== "table" && (!vis || visAt(vis, this.butlerAv.root.position.x, this.butlerAv.root.position.z) > 0.5);
     const cut = v.cut && this.time - v.cut.t0 < v.cut.dur ? v.cut : null;
     const cutU = cut ? (this.time - cut.t0) / cut.dur : 1;
     for (const [id, c] of this.corpses) c.root.visible = !(cut && id === cut.victim && cutU < 0.54) && !c.hidden && (!vis || visAt(vis, c.root.position.x, c.root.position.z) > 0.5);
@@ -680,19 +762,21 @@ export class View {
     if (pos) {
       const room = roomAtWorld(pos.x, pos.z);
       let best = Infinity;
-      for (const l of m.lights) { if (l.userData.room !== room) continue; const d = Math.hypot(l.position.x - pos.x, l.position.z - pos.z); if (d < best) { best = d; src = l; } }
-      if (!src) for (const l of m.lights) { const d = Math.hypot(l.position.x - pos.x, l.position.z - pos.z); if (d < best && d < 9) { best = d; src = l; } }
+      for (const l of m.lights) { if (l.userData.room !== room||l.intensity<=0) continue; const d = Math.hypot(l.position.x - pos.x, l.position.z - pos.z); if (d < best) { best = d; src = l; } }
+      if (!src) for (const l of m.lights) { const d = Math.hypot(l.position.x - pos.x, l.position.z - pos.z); if (l.intensity>0&&losClear(pos.x,pos.z,l.position.x,l.position.z,this.snap?.doors||[])&&d < best && d < 9) { best = d; src = l; } }
     }
     if (src) {
-      k.position.set(src.position.x, WALL_H - 0.15, src.position.z);
+      k.position.set(src.position.x, src.position.y + .1, src.position.z);
       k.target.position.set(src.position.x, 0, src.position.z);
       k.target.updateMatrixWorld();
       k.color.copy(src.color);
-      k.intensity = src.intensity * 2.4;
+      k.intensity = src.intensity * 1.15;
       src.userData.saved = src.intensity;
-      src.intensity *= 0.35;
+      src.intensity *= 0.7;
       v.keySrc = src;
     } else k.intensity = 0;
+    v.indoorAmbient=indoor&&living;
+    if(v.indoorAmbient){v.originalMoon=m.moon.intensity;v.originalHemi=m.hemi.intensity;const ambientLight=me?illuminationAt(me.x,me.z,snapshotLighting(this.snap,this.props)):1;m.moon.intensity=.012+.06*ambientLight;m.hemi.intensity=.035+.16*ambientLight;}
     // Underground: no moonlight, no sky — only the torches.
     const eye = me ? this.avatars.get(v.follow).root.position : null;
     v.under = !!(eye && underground(eye.z) && (v.mode !== "title" || !v.titleOrbit) && v.mode !== "table" && v.mode !== "overview");
@@ -706,6 +790,7 @@ export class View {
   }
   afterView(v) {
     if (v.under) { this.mansion.moon.intensity = v.saveMoon; this.mansion.hemi.intensity = v.saveHemi; v.under = false; }
+    if(v.indoorAmbient){this.mansion.moon.intensity=v.originalMoon;this.mansion.hemi.intensity=v.originalHemi;v.indoorAmbient=false;}
     if (v.cutSil) { this.silhouette(v.cutSil, false); v.cutSil = null; }
     if (v.cutProp) { v.cutProp.visible = v.cutPropVisible; v.cutProp = null; }
     v.ownHidden?.hideHead(false);

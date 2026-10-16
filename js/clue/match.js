@@ -16,6 +16,11 @@ import { BurnMethods } from "./burning.js";
 import { TeamMethods } from "./teamup.js";
 import { ButlerMethods } from "./butler.js";
 import { optionHint, sceneContext, pickTemper } from "./talk-context.js";
+import { mergeHairState, normalizeHairState } from "./hair-state.js";
+import {avatarMode as validAvatarMode,humanAvatar} from './avatar-policy.js';
+import {LIGHT_SWITCHES,FLOOR_LAMPS,illuminationAt} from './lighting.js';
+import {moveBody} from './body-collision.js';
+import {BarberMethods} from './barber.js';
 
 const rand = (a, b) => a + Math.random() * (b - a);
 const choice = (l) => l[Math.floor(Math.random() * l.length)];
@@ -25,7 +30,10 @@ const WALK = 1.6, HURRY = 4.2, GHOST_SPEED = 2.6;
 const inRoom = (r) => r && r !== "hallway" && r !== "cellar" && r !== "tunnels";
 
 export class Match {
-  constructor({ humans = [], demo = false, io = {}, killers = 1, shared = null }) {
+  constructor({ humans = [], demo = false, io = {}, killers = 1, avatarMode='mixed', shared = null }) {
+    this.avatarMode=validAvatarMode(avatarMode);
+    this.lightsOff = {};
+    this.haircuts = {};
     this.demo = demo;
     this.io = { toSeat: io.toSeat || (() => {}), broadcast: io.broadcast || (() => {}) };
     this.humans = new Set(humans.map((h) => h.char));
@@ -110,6 +118,10 @@ export class Match {
   // Rebuild a playable local round from the public state a guest last received.
   // The host's private AI plans are unavailable to guests, so AI chooses fresh plans.
   restoreSnapshot(snap, localChar, hud) {
+    this.avatarMode=validAvatarMode(snap.avatarMode);
+    this.lightsOff={...snap.lightsOff};
+    this.haircuts = {};
+    for(const [id,state] of Object.entries(snap.haircuts||{})){const valid=normalizeHairState(id,state);if(valid)this.haircuts[id]=valid;}
     if (!snap?.chars?.length) return false;
     this.humans = new Set([localChar]);
     this.names = {};
@@ -169,7 +181,7 @@ export class Match {
       p.kind = kind; p.x = row[1]; p.y = row[2]; p.z = row[3]; p.yaw = row[4]; p.roll = row[5];
       p.hidden = !!row[6]; p.holder = row[12] || null; p.stash = row[13] || null; p.pocket = !!row[14]; p.gone = !!row[15];
       p.atBody = !!row[8]; p.bloody = !!(row[9] & 1); p.wet = !!(row[9] & 2); p.lit = !!(row[9] & 4);
-      p.burn = null; p.vx = p.vy = p.vz = 0; p.sleep = true; p.moved = true;
+      p.burn = null;p.vx=Number.isFinite(row[17])?row[17]:0;p.vy=Number.isFinite(row[18])?row[18]:0;p.vz=Number.isFinite(row[19])?row[19]:0;p.sleep=row[16]===1;p.moved=true;
       props.push(p);
     }
     if (props.length) { this.props.list = props; this.props.byId = new Map(props.map((p) => [p.id, p])); }
@@ -257,11 +269,12 @@ export class Match {
     // Even at arm's length, something behind the eyes is not a sighting.
     const fov = cos >= 0.5 ? 1 : cos >= 0.25 ? 0.35 + 0.65 * (cos - 0.25) / 0.25 : 0;
     if (!fov) return 0;
-    if (d < 1.3) return fov * 0.9;
-    const range = 6 + 9 * trait(o.id, "observation");
+    const illumination=room==='tunnels'?1:illuminationAt(x,z,{off:this.lightsOff,props:this.props.list,fires:[...this.fires],doors:this.doors});
+    if (d < 1.3) return fov * (.35+.55*illumination);
+    const range = (6 + 9 * trait(o.id, "observation"))*(.15+.85*Math.sqrt(illumination));
     const far = Math.max(0, Math.min(1, 1 - (d - 2.5) / (range - 2.5)));
     const light = this.overtime ? 0.65 : 1;
-    return fov * far * light;
+    return fov * far * light * (.12+.88*Math.sqrt(illumination));
   }
   // Can o see p right now? Anything clearer than a vague shape counts.
   sees(o, p) { return this.perceive(o, p) > 0.12; }
@@ -273,6 +286,7 @@ export class Match {
     dt = Math.min(dt, 0.1);
     this.time += dt;
     this.updateWorld(dt);
+    this.updateBarber(dt);
     if (this.phase === "intro") { this.phaseT -= dt; if (this.phaseT <= 0) this.startDay(1); return; }
     if (this.phase === "over") return;
     if (this.phase === "night" || this.phase === "body") {
@@ -945,11 +959,22 @@ export class Match {
   }
   witnesses(room, except = []) { return this.living().filter((c) => c.room === room && !except.includes(c.id)); }
 
+  moveWithBodies(c,x,z) {
+    const bodies=[...this.chars.values(),this.butler].filter(Boolean);
+    const result=moveBody(c,x,z,bodies,this.doors);
+    for(const b of result.changed)if(b.human&&(b!==c||Math.hypot(x-b.x,z-b.z)>.035)){
+      if(this.time-(b.bumpSentAt??-1)>.075){b.bumpSentAt=this.time;this.toSeat(b.id,{type:"bump",x:b.x,z:b.z});}
+    }
+    return result;
+  }
+
   // ---------- actions (from humans; AI calls the same paths) ----------
   action(id, a) {
     const c = this.chars.get(id);
     if (!c) return;
+    if(a.type==='hairCancel'&&[this.barber?.actor,this.barber?.target].includes(id))return this.cancelBarber('Haircut cancelled.');
     if (a.type === "pos") {
+      if (![a.x,a.z,a.yaw,a.mv].every(Number.isFinite)) return;
       if (!c.alive && this.phase !== "accuse") {
         const refuge = c.lockRoom || c.room;
         if (this.overtime && !c.isKiller && inRoom(refuge) && roomExitBlocked(refuge, c.x, c.z, a.x, a.z)) return;
@@ -959,7 +984,7 @@ export class Match {
       if (Math.hypot(a.x - c.x, a.z - c.z) > 8 && !a.tp) return;
       const refuge = c.lockRoom || c.room;
       if (this.overtime && !c.isKiller && inRoom(refuge) && roomExitBlocked(refuge, c.x, c.z, a.x, a.z)) return;
-      c.x = a.x; c.z = a.z; c.yaw = a.yaw; c.pitch = a.pitch || 0; c.mv = a.mv;
+      this.moveWithBodies(c,a.x,a.z); c.yaw = a.yaw; c.pitch = a.pitch || 0; c.mv = a.mv;
       return;
     }
     if (a.type === "hand") { c.hand = a.p ? { ...a.p, t: this.time } : null; return; }
@@ -974,6 +999,12 @@ export class Match {
       return;
     }
     if (c.ko && a.type !== "propose" && a.type !== "vote" && a.type !== "rebut") return;
+    if(a.type==='light'){
+      if(this.phase!=='day'||this.overtime||c.convo||(c.lightAt||0)>this.time)return;
+      const key=String(a.id),fixture=LIGHT_SWITCHES.find(f=>f.id===key)||FLOOR_LAMPS.find(f=>'lamp:'+f.id===key)||this.props.list.find(p=>'prop:'+p.id===key&&p.kind==='lamp'&&!p.hidden&&!p.gone&&!p.pocket);
+      if(!fixture||dist(c,fixture)>2.6||!losClear(c.x,c.z,fixture.x,fixture.z,this.doors))return;
+      this.lightsOff[key]=!this.lightsOff[key];c.lightAt=this.time+.3;this.toast(c,this.lightsOff[key]?'Light off.':'Light on.');return;
+    }
     if (a.type === "kill") return this.tryKill(c, a.target);
     if (a.type === "knock") return this.tryKnock(c, a.target);
     if (a.type === "decide") return this.decide(c, !!a.accept);
@@ -987,6 +1018,11 @@ export class Match {
     if (a.type === "propose" || a.type === "vote") return this.accVote(c, a);
     if (a.type === "rebut") return this.accRebut(c, a);
     if (this.phase !== "day") return;
+    if(a.type==='hairAsk')return this.askHair(c,a.target);
+    if(a.type==='hairReply')return this.hairReply(c,!!a.accept);
+    if(a.type==='hairSneak')return this.sneakHair(c,a.target);
+    if(a.type==='hairCut')return this.barberCut(c,a.state);
+    if(a.type==='hairBetray')return this.barberBetray(c);
     if (a.type === "grab") return this.grab(c, a.prop);
     if (a.type === "drop") return this.release(c, { x: 0, y: 0, z: 0 }, a.at, a.id || null);
     if (a.type === "throw") return this.release(c, a.v);
@@ -1436,7 +1472,7 @@ export class Match {
   // ---------- AI movement & behaviour ----------
   updateBots(dt, seated) {
     for (const c of this.chars.values()) {
-      if (c.human || !c.alive) continue;
+      if (c.human || !c.alive || c.barberLocked) continue;
       if (c.ko) { c.mv = c.pace = 0; stepStamina(c.stamina, dt, false, false); continue; }
       if (seated) { c.mv = c.pace = 0; stepStamina(c.stamina, dt, false, false); continue; }
       if (this.overtime) { stepStamina(c.stamina, dt, false, false); continue; } // flicker logic drives movement
@@ -1544,15 +1580,9 @@ export class Match {
     c.pace += Math.max(-8 * dt, Math.min((c.stamina.running ? 7 : 4.5) * dt, wantedPace - c.pace));
     const step = Math.min(d, c.pace * dt);
     const nx = c.x + dx / d * step, nz = c.z + dz / d * step;
-    const fixed = collide(nx, nz, 0.28, this.doors, { ignoreOpenDoors: true });
-    for (const o of this.chars.values()) {
-      if (o === c || !o.alive || o.ko) continue;
-      const ox = fixed.x - o.x, oz = fixed.z - o.z, od = Math.hypot(ox, oz);
-      if (od < 0.6 && od > 1e-3) { const push = Math.min((0.6 - od) * 0.5, step * 0.55); fixed.x += ox / od * push; fixed.z += oz / od * push; }
-    }
-    const safe = collide(fixed.x, fixed.z, 0.28, this.doors, { ignoreOpenDoors: true });
-    const moved = Math.hypot(safe.x - c.x, safe.z - c.z);
-    c.x = safe.x; c.z = safe.z;
+    const oldX=c.x,oldZ=c.z;
+    const safe=this.moveWithBodies(c,nx,nz);
+    const moved=Math.hypot(safe.x-oldX,safe.z-oldZ);
     c.mv = Math.min(moved / Math.max(dt, 1e-3), c.pace + 0.6);
     c.stuck = moved < step * 0.2 ? (c.stuck || 0) + dt : 0;
     if (c.stuck > 1.2) {
@@ -2032,6 +2062,7 @@ export class Match {
       else out.push(search);
     }
     if (this.canOfferTeam(me, them, cv)) out.splice(Math.min(out.length, 2), 0, this.teamOption(me));
+    if(this.canAskHair(me,them))out.unshift({tag:'hairAsk',text:me.isKiller?'May I help tidy your hair at the bathroom chair?':'My task is to cut hair. May I give you a trim in the bathroom?',tone:'warm',kind:'Share task'});
     out.push({ tag: "end", text: Math.random() < 0.5 && soulLine(me.id, "farewell") || choice(["I should be going.", "Excuse me.", "Let's talk later."]), tone: "leave", kind: "" });
     cv.options = cv.options || {};
     cv.options[me.id] = out;
@@ -2045,6 +2076,7 @@ export class Match {
     if (!cv || cv.waitingFor !== c.id) return;
     const opt = cv.options?.[c.id]?.[i];
     if (!opt) return;
+    if(opt.tag==='hairAsk'){this.endConvo(cv.id,true);return this.askHair(c,cv.a===c.id?cv.b:cv.a);}
     cv.waitingFor = cv.readyFor = cv.responseDue = null;
     cv.graces = 0;
     const other = this.chars.get(cv.a === c.id ? cv.b : cv.a);
@@ -2478,6 +2510,14 @@ export class Match {
 
 
   // ---------- public snapshot ----------
+  isHumanAvatar(c){return !!c&&humanAvatar(this.avatarMode,c.id,[...this.humans]);}
+  // Call from a completed, host-authorized haircut task. This deliberately is
+  // not a public client command: the task must validate tools/reach/consent.
+  recordHaircut(targetId,state){
+    const target=this.chars.get(targetId);if(!target?.alive||!this.isHumanAvatar(target))return false;
+    const next=mergeHairState(targetId,this.haircuts[targetId],state);
+    if(!next)return false;this.haircuts[targetId]=next;return true;
+  }
   snapshot(forceFull = false) {
     const full = forceFull || this.time - this.fullT > 3;
     if (full) this.fullT = this.time;
@@ -2485,11 +2525,15 @@ export class Match {
     for (const p of this.props.list) {
       if (!full && p.sleep && !p.holder && !p.moved) continue;
       p.moved = false;
-      props.push([p.id, q(p.x), q(p.y), q(p.z), q(p.yaw || 0), q(p.roll || 0), p.hidden ? 1 : 0, p.holder ? 1 : 0, p.atBody ? 1 : 0, (p.bloody ? 1 : 0) | (p.wet ? 2 : 0) | (p.lit ? 4 : 0) | (p.burn ? 8 : 0) | (p.burn?.lit ? 16 : 0), p.burn?.lit ? q(p.burn.progress || 0) : 0, p.kind, p.holder || null, p.stash || null, p.pocket ? 1 : 0, p.gone ? 1 : 0]);
+      props.push([p.id, q(p.x), q(p.y), q(p.z), q(p.yaw || 0), q(p.roll || 0), p.hidden ? 1 : 0, p.holder ? 1 : 0, p.atBody ? 1 : 0, (p.bloody ? 1 : 0) | (p.wet ? 2 : 0) | (p.lit ? 4 : 0) | (p.burn ? 8 : 0) | (p.burn?.lit ? 16 : 0), p.burn?.lit ? q(p.burn.progress || 0) : 0, p.kind, p.holder || null, p.stash || null, p.pocket ? 1 : 0, p.gone ? 1 : 0,p.sleep?1:0,q(p.vx||0),q(p.vy||0),q(p.vz||0)]);
     }
     if (this.stainV !== this.lastSV) { this.lastSV = this.stainV; this.stainT = this.time; }
     const sendStains = full || this.time - (this.stainT || -9) < 0.6;
     return {
+      lightsOff:this.lightsOff,
+      haircuts: this.haircuts,
+      avatarMode:this.avatarMode,humanIds:[...this.humans],
+      barber:this.barber?{actor:this.barber.actor,target:this.barber.target,mode:this.barber.mode,stage:this.barber.stage,progress:this.barber.progress||0}:null,
       ph: this.phase, day: this.day, ld: this.lastDay, t: Math.round(this.t * 10) / 10, ot: this.overtime, fs: this.flickerSealed, hide: this.postKillUntil === null ? 0 : Math.max(0, Math.ceil(this.postKillUntil - this.time)), search: this.searchUntil === null ? 0 : Math.max(0, Math.ceil(this.searchUntil - this.time)), ka: this.killAllowed(), full,
       chars: [...this.chars.values()].map((c) => [c.id, q(c.x), q(c.z), q(c.yaw), Math.round(c.mv * 10) / 10, c.alive ? 1 : 0, c.convo || c.chat ? 1 : 0, c.anim && c.animUntil > this.time ? c.anim : 0, c.room, c.seat || 0, c.hands[0] || 0, c.auto ? 1 : 0, q(c.pitch || 0), c.hands[1] || 0, c.dragging || c.dragKO ? 1 : 0, c.pouring ? 1 : 0, c.ko ? 1 : 0, c.pockets[0] || 0, c.pockets[1] || 0, c.chat?.with || this.convoPartner(c) || null]),
       props,
@@ -2511,4 +2555,4 @@ export function publicFact(f) {
   return { ...rest, text: factText(f) };
 }
 
-Object.assign(Match.prototype, ItemMethods, TunnelMethods, TaskMethods, BurnMethods, TeamMethods, ButlerMethods);
+Object.assign(Match.prototype, ItemMethods, TunnelMethods, TaskMethods, BurnMethods, TeamMethods, ButlerMethods, BarberMethods);

@@ -1,6 +1,7 @@
 // Pinned guide-chain hair dynamics: short groom and long loose hair profiles.
 // Fixed 120 Hz Verlet integration, segment constraints and animated colliders.
 import * as THREE from 'three';
+import {installHairCollision} from './hair-collision.js';
 const STEP = 1 / 120;
 export class HairMotion {
   constructor(model, bones) {
@@ -8,7 +9,7 @@ export class HairMotion {
     this.acc=0; this.ready=false; this.time=0; this.wind=new THREE.Vector3(.22,0,.10); this.air=new THREE.Vector3(); this.flow=new THREE.Vector3(); this.direction=new THREE.Vector3(); this.delta=new THREE.Vector3(); this.contact=new THREE.Vector3(); this.turnQ=new THREE.Quaternion(); this.long=this.head?.userData.hairProfile==='long';
     this.invHead=new THREE.Matrix4(); this.headWorld=new THREE.Matrix4();
     this.v=new THREE.Vector3(); this.local=new THREE.Vector3();
-    this.q=new THREE.Quaternion(); this.parentQ=new THREE.Quaternion();
+    this.q=new THREE.Quaternion(); this.parentQ=new THREE.Quaternion();this.parentPosition=new THREE.Vector3();this.parentScale=new THREE.Vector3();this.detail=1;this.detailTime=0;
     this.scale=new THREE.Vector3(); this.closest=new THREE.Vector3();
     model.updateMatrixWorld(true);
     const count=this.head?.userData.hairGuideCount||24;
@@ -34,8 +35,9 @@ export class HairMotion {
     for(const g of this.guides){
       g.restDirections=g.rest.slice(1).map((p,i)=>p.clone().sub(g.rest[i]).normalize());
       g.turns=g.restDirections.map((d,i)=>i?new THREE.Quaternion().setFromUnitVectors(g.restDirections[i-1],d):new THREE.Quaternion());
-      g.pins=this.long?Math.min(3,g.chain.length-1):0;g.lambda=new Float64Array(g.len.length);
+      g.pins=this.long?Math.min(this.head.userData.hairPinnedSegments??3,g.chain.length-1):0;g.lambda=new Float64Array(g.len.length);
       g.rootStart=new THREE.Vector3();g.rootTarget=new THREE.Vector3();
+      g.originalRest=g.rest.map(p=>p.clone());g.originalLen=g.len.slice();g.originalPins=g.pins;g.activeCount=g.chain.length;g.cutRatio=1;
     }
     this.center=new THREE.Vector3(...(this.head?.userData.scalpCenter||[0,0,8.8]));
     this.radii=new THREE.Vector3(...(this.head?.userData.scalpRadii||[9.625,11.825,11.55]));
@@ -52,6 +54,50 @@ export class HairMotion {
         });
       }
     }
+    installHairCollision(model,this);
+  }
+  refreshMaterials(){installHairCollision(this.model,this);}
+  setCutLengths(records,lengths){
+    const ratios=new Float32Array(this.guides.length),used=new Uint8Array(this.guides.length);
+    for(const s of records){if(s.guide<0||s.guide>=ratios.length)continue;used[s.guide]=1;ratios[s.guide]=Math.max(ratios[s.guide],lengths[s.id]/Math.max(.000001,s.length));}
+    this.guides.forEach((g,k)=>{
+      const ratio=THREE.MathUtils.clamp(used[k]?ratios[k]:1,0,1);
+      if(Math.abs(ratio-g.cutRatio)<.00001)return;
+      const regrowing=ratio>g.cutRatio,oldCount=g.activeCount,oldLen=g.len.slice();
+      g.cutRatio=ratio;
+      const total=g.originalLen.reduce((a,b)=>a+b,0),target=total*ratio;
+      g.rest=g.originalRest.map(p=>p.clone());g.len=g.originalLen.slice();
+      let sum=0,active=0;
+      if(target>1e-6)for(let i=0;i<g.len.length;i++){
+        active=i+1;
+        if(sum+g.len[i]>=target){
+          const remaining=Math.max(1e-6,target-sum);
+          g.rest[i+1].lerpVectors(g.originalRest[i],g.originalRest[i+1],remaining/g.originalLen[i]);
+          g.len[i]=remaining;break;
+        }
+        sum+=g.len[i];
+      }
+      // A cut removes distal mass. Retain the deformed shape and velocity of
+      // every surviving particle, including the interpolated new cut endpoint.
+      // Resetting the whole chain to its groom after each scissor sample snapped
+      // long locks backwards and repeatedly injected apparent movement.
+      if(regrowing||!this.ready){
+        g.p.forEach((p,i)=>{p.copy(g.rest[i]).applyMatrix4(this.head.matrixWorld);g.prev[i].copy(p);});
+      }else if(active>0&&active<=oldCount){
+        const fraction=THREE.MathUtils.clamp(g.len[active-1]/Math.max(1e-8,oldLen[active-1]),0,1);
+        g.p[active].lerpVectors(g.p[active-1],g.p[active],fraction);
+        g.prev[active].lerpVectors(g.prev[active-1],g.prev[active],fraction);
+      }
+      g.activeCount=active;
+      // Stubble follows its root. Do not fight scalp collision with a nearly
+      // zero-length, freely simulated segment or a fully removed guide.
+      g.pins=target<.008?active:Math.min(g.originalPins,Math.max(0,active-1));
+      g.restDirections=g.rest.slice(1).map((p,i)=>p.clone().sub(g.rest[i]).normalize());
+      g.turns=g.restDirections.map((d,i)=>i?new THREE.Quaternion().setFromUnitVectors(g.restDirections[i-1],d):new THREE.Quaternion());
+      for(let i=active+1;i<g.p.length;i++){
+        g.p[i].copy(g.p[active]);g.prev[i].copy(g.p[i]);
+      }
+    });
   }
   // World-space air velocity in meters/second, supplied by the game or preview.
   setWind(wind){
@@ -91,6 +137,10 @@ export class HairMotion {
   update(dt,snap=false){
     if(!this.head||!this.guides.length)return;
     if(this.head.scale.x<.1){this.ready=false;return;}
+    if(this.detail<=0){this.ready=false;return;}
+    this.detailTime+=Math.max(0,dt);
+    if(this.detailTime<1/(this.detail>=1?30:this.detail>=.5?15:6)&&!snap)return;
+    dt=Math.min(this.detailTime,.1);this.detailTime=0;
     for(const g of this.guides)g.chain.forEach((b,i)=>b.quaternion.copy(g.quaternions[i]));
     this.model.updateMatrixWorld(true);
     this.headWorld.copy(this.head.matrixWorld);this.invHead.copy(this.headWorld).invert();
@@ -106,12 +156,12 @@ export class HairMotion {
     while(this.acc>=STEP){
       this.time+=STEP;step++;
       for(let guide=0;guide<this.guides.length;guide++){
-        const g=this.guides[guide],last=g.p.length-1;
+        const g=this.guides[guide],last=g.activeCount;
         g.p[0].copy(g.rootStart).lerp(g.rootTarget,step/Math.max(1,steps));g.prev[0].copy(g.p[0]);
         for(let i=1;i<=last;i++){
           if(i<=g.pins){g.p[i].copy(g.rest[i]).applyMatrix4(this.headWorld);g.prev[i].copy(g.p[i]);continue;}
           // World-space particles retain momentum when their moving root turns/stops.
-          this.v.copy(g.p[i]).sub(g.prev[i]).multiplyScalar(this.long?.986:.94).clampLength(0,8*STEP);
+          this.v.copy(g.p[i]).sub(g.prev[i]).multiplyScalar(this.long?.986:.94).clampLength(0,Math.min(8*STEP,g.len[i-1]*.35));
           g.prev[i].copy(g.p[i]);g.p[i].add(this.v);g.p[i].y-=9.81*STEP*STEP;
           const pos=g.p[i],t=this.time;
           const speed=this.wind.length();
@@ -166,36 +216,43 @@ export class HairMotion {
             this.contact.copy(g.p[i]);this.collide(g.p[i]);
             this.contact.sub(g.p[i]);
             // Remove contact-generated normal velocity, retaining sliding motion.
-            if(this.contact.lengthSq()>1e-12)g.prev[i].addScaledVector(this.contact,-.85);
+            if(this.contact.lengthSq()>1e-12)g.prev[i].addScaledVector(this.contact,-1);
           }
         }
         for(let i=g.pins+1;i<=last;i++){
           this.contact.copy(g.p[i]);this.collide(g.p[i]);this.contact.sub(g.p[i]);
-          if(this.contact.lengthSq()>1e-12)g.prev[i].addScaledVector(this.contact,-.85);
+          if(this.contact.lengthSq()>1e-12)g.prev[i].addScaledVector(this.contact,-1);
         }
       }
       if(this.long){
         // Coarse lock-volume separation, with no attraction to an absolute pose.
         for(let pass=0;pass<2;pass++)for(let k=0;k<this.guides.length-1;k++){
           const a=this.guides[k],b=this.guides[k+1];
-          for(let i=a.pins+1;i<a.p.length;i++){
+          for(let i=Math.max(a.pins,b.pins)+1;i<=Math.min(a.activeCount,b.activeCount);i++){
             this.delta.copy(b.p[i]).sub(a.p[i]);const d=this.delta.length();
             const gap=Math.min(.010,.005+.005*i/(a.p.length-1))*this.unitScale;
             if(d>1e-6&&d<gap){
-              this.delta.multiplyScalar((gap-d)/(2*d));a.p[i].sub(this.delta);b.p[i].add(this.delta);
-              this.collide(a.p[i]);this.collide(b.p[i]);
+              this.delta.multiplyScalar((gap-d)/(2*d));
+              // Constraint displacement is not physical velocity. Move history
+              // with the particles so separation cannot kick newly cut locks.
+              this.contact.copy(a.p[i]);a.p[i].sub(this.delta);this.collide(a.p[i]);
+              a.prev[i].add(this.v.copy(a.p[i]).sub(this.contact));
+              this.contact.copy(b.p[i]);b.p[i].add(this.delta);this.collide(b.p[i]);
+              b.prev[i].add(this.v.copy(b.p[i]).sub(this.contact));
             }
           }
         }
       }
       this.acc-=STEP;
     }
-    for(const g of this.guides)for(let i=0;i<g.chain.length;i++){
+    for(const g of this.guides)for(let i=0;i<g.activeCount;i++){
       const bone=g.chain[i],restQ=g.quaternions[i];
-      bone.parent.updateWorldMatrix(true,false);bone.parent.getWorldQuaternion(this.parentQ).invert();
+      // Parent matrices were updated once above, or by the preceding guide
+      // segment. Avoid recursively updating every descendant for every bone.
+      bone.parent.matrixWorld.decompose(this.parentPosition,this.parentQ,this.parentScale);this.parentQ.invert();
       this.v.copy(g.p[i+1]).sub(g.p[i]).normalize().applyQuaternion(this.parentQ);
       this.local.copy(g.axes[i]).applyQuaternion(restQ).normalize();
-      this.q.setFromUnitVectors(this.local,this.v);bone.quaternion.copy(this.q).multiply(restQ);bone.updateWorldMatrix(false,true);
+      this.q.setFromUnitVectors(this.local,this.v);bone.quaternion.copy(this.q).multiply(restQ);bone.updateMatrix();bone.matrixWorld.multiplyMatrices(bone.parent.matrixWorld,bone.matrix);
     }
   }
 }

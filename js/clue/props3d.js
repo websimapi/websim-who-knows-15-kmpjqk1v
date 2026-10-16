@@ -121,10 +121,20 @@ function kindMesh(kind, r) {
   return g;
 }
 
+// Mesh bounds exclude halo/flame sprites so visual bases sit on the sphere's contact plane.
+export function seatPropMesh(holder,r){
+  const inner=holder.userData.inner;if(!inner)return;r=Number.isFinite(r)?r:.08;
+  const pose=()=>[inner.rotation.x,inner.rotation.y,inner.rotation.z,inner.position.y,r].join(',');if(holder.userData.contactPose===pose())return;
+  holder.updateMatrixWorld(true);const inverse=holder.matrixWorld.clone().invert(),bounds=new THREE.Box3();
+  inner.traverse(o=>{if(!o.isMesh)return;if(!o.geometry.boundingBox)o.geometry.computeBoundingBox();const box=o.geometry.boundingBox.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse,o.matrixWorld));bounds.union(box);});
+  if(!bounds.isEmpty())inner.position.y+=-r-bounds.min.y;
+  holder.userData.contactPose=pose();
+}
 export function propMesh(p) {
   const holder = new THREE.Group();
   const inner = p.weapon || p.core ? weaponGroup(p.kind, p.r) : kindMesh(p.kind, p.r);
   holder.add(inner);
   holder.userData = { inner, halo: inner.userData.halo, flame: inner.userData.flame, torch: inner.userData.torch };
+  seatPropMesh(holder,p.r);
   return holder;
 }

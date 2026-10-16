@@ -4,8 +4,10 @@
 import * as THREE from "three";
 import { SUSPECT_BY_ID, DAY_SECONDS, EYE, clockLabel, roomAtWorld, roomName, weaponName, WEAPON_BY_ID, LAST_DAY, itemName, isBig } from "./data.js";
 import { collide, losClear, DOOR_LIST, HATCH_POS, roomExitBlocked } from "./nav.js";
+import {moveBody} from './body-collision.js';
 import { waterAt } from "./tunnels.js";
 import { FURNITURE, FURN_BY_ID, BODY_HIDES, SEATS, POOL, surfaceAt, PUSHABLES } from "./layout.js";
+import {LIGHT_SWITCHES,FLOOR_LAMPS,illuminationAt,snapshotLighting} from './lighting.js';
 import { Match } from "./match.js";
 import { PlayerHud, Cine, TableBoard } from "./ui.js";
 import { read, buzz, bindPointerLock, bindTouchControls, releasePointer } from "./input.js";
@@ -31,7 +33,7 @@ let lockBound = false;
 
 export class Game {
   // mode: "local" | "host" | "client"; locals: [{char, device}]; remote: [{char, conn, name}]
-  constructor({ view, mode, locals, remote = [], net = null, names = {}, killers = 1, onExit, onAgain }) {
+  constructor({ view, mode, locals, remote = [], net = null, names = {}, killers = 1, avatarMode='mixed', onExit, onAgain }) {
     this.view = view; this.mode = mode; this.net = net; this.names = names;
     this.onExit = onExit; this.onAgain = onAgain;
     this.cine = new Cine($("#cine"));
@@ -65,7 +67,7 @@ export class Game {
     if (mode !== "client") {
       const humans = [...locals.map((l) => ({ char: l.char, name: names[l.char] })), ...remote.map((r) => ({ char: r.char, name: r.name }))];
       this.match = new Match({
-        humans, killers, shared: locals.length > 1 ? locals.map((l) => l.char) : null,
+        humans, killers, avatarMode, shared: locals.length > 1 ? locals.map((l) => l.char) : null,
         io: {
           toSeat: (id, msg) => this.toSeat(id, msg),
           broadcast: (msg) => { this.onBroadcast(msg); if (mode === "host") net.toAll({ k: "b", m: msg }); },
@@ -120,6 +122,7 @@ export class Game {
 
   destroy() {
     this.alive = false;
+    for(const p of this.players)p.hud.barberPanel?.close();
     for (const p of this.players) p.worldTask?.close();
     for (const [name,fn] of this.taskPointerHandlers || []) this.view.renderer.domElement.removeEventListener(name,fn,true);
     if (window.__clueGame === this) window.__clueGame = null;
@@ -143,7 +146,7 @@ export class Game {
   }
   panelOpen(p) {
     const a = p.hud.accState;
-    return !!(p.worldTask?.active && p.worldTask.focus || p.hud.poolPanel.active || p.hud.taskPanel.active || p.hud.convo || p.hud.bodyMenuVictim || p.hud.bookOpen || (a && !["tally", "reveal", "done"].includes(a.stage) && p.hud.alive) || this.overFocus?.length && !$("#cine").classList.contains("hidden"));
+    return !!(p.hud.barberPanel?.active || p.worldTask?.active && p.worldTask.focus || p.hud.poolPanel.active || p.hud.taskPanel.active || p.hud.convo || p.hud.bodyMenuVictim || p.hud.bookOpen || (a && !["tally", "reveal", "done"].includes(a.stage) && p.hud.alive) || this.overFocus?.length && !$("#cine").classList.contains("hidden"));
   }
 
   // ---------- messaging ----------
@@ -226,6 +229,7 @@ export class Game {
       if (item && !heldBefore.has(item.id)) this.noticeItem(p, item.id, item.kind);
     }
     if (msg.type === "dead") p.dead = true;
+    if (msg.type === "bump") { p.x=msg.x;p.z=msg.z; }
     if (msg.type === "tp") { p.x = msg.x; p.z = msg.z; p.mv = 0; p.tpAt = performance.now(); }
     if (msg.type === "role" && this.secret) setTimeout(() => this.buzzRole(p), 700);
     if (msg.sfx) sfx(msg.sfx);
@@ -413,6 +417,7 @@ export class Game {
       if (!row) return;
       p.hud.poolPanel.update(snap, row);
       p.hud.taskPanel.update(snap, row);
+      p.hud.barberPanel?.update(snap,row);
       p.worldTask?.update(snap,row,dt);
       const v = this.view.views[idx];
       const inp = this.paused ? read(null) : anyInp[idx];
@@ -528,7 +533,10 @@ export class Game {
     const k = Math.min(1, len);
     const dx = (fx * -mz + rx * mx) / len * k, dz = (fz * -mz + rz * mx) / len * k;
     const nx = p.x + dx * speed * dt, nz = p.z + dz * speed * dt;
-    const c = alive ? collide(nx, nz, 0.28, snap.doors) : collide(nx, nz, 0.3, null, { ghost: true });
+    const predicted={id:p.char,x:p.x,z:p.z,alive:true};
+    const bodies=alive?snap.chars.filter(r=>r[0]!==p.char).map(r=>({id:r[0],x:r[1],z:r[2],alive:!!r[5],convo:!!r[6],seat:r[9],ko:!!r[16]})):[];
+    if(alive&&snap.butler)bodies.push({id:'butler',x:snap.butler[0],z:snap.butler[1],alive:true,bodyFixed:!!snap.butler[5]});
+    const c = alive ? moveBody(predicted,nx,nz,[predicted,...bodies],snap.doors) : collide(nx, nz, 0.3, null, { ghost: true });
     // Lights out: the living stay in the room they hurried into.
     if (snap.ot && p.hud.role !== "killer") {
       const current = roomAtWorld(p.x, p.z);
@@ -591,7 +599,7 @@ export class Game {
     const dragging = !!row[14], pouring = !!row[15];
     // Hands and pockets.
     if (alive && inp.pocket) { this.act(p.char, { type: "stow" }); return null; }
-    if (alive && inp.use && active && !active.big) {
+    if (alive && inp.use && active && !active.big && active.kind!=='kitchen_knife') {
       const bandaging = p.hud.bleeding && inv.hands.some((d) => d?.kind === "bandage");
       this.act(p.char, { type: "use" });
       return null;
@@ -643,6 +651,8 @@ export class Game {
         const r = t.row;
         const name = SUSPECT_BY_ID[r[0]].short;
         if (!r[6]) lines.push(`${k("act")} Talk to ${name}`); else lines.push(`<span class="dim">${name} is in conversation</span>`);
+        const hairTarget=this.view.avatars.get(r[0])?.humanForm&&this.view.avatars.get(p.char)?.humanForm&&inv.hands.some(h=>h?.kind==='kitchen_knife')&&(p.hud.task?.id==='haircut'||killer)&&!!r[5]&&!r[16];
+        if(hairTarget){lines.push(`${k('use')} Sneak cut hair · stealth vs attention`);if(inp.use){this.act(p.char,{type:'hairSneak',target:r[0]});return null;}}
         const canKill = killer && snap.ka && (!p.hud.lockedTarget || p.hud.lockedTarget === r[0]) && INROOM(me.room) && r[8] === me.room && t.d < 2.8;
         const down = !!r[16];
         const below = me.room === "tunnels" || r[8] === "tunnels";
@@ -700,6 +710,7 @@ export class Game {
       const dx = pt.x - eye.x, dy = pt.y - eye.y, dz = pt.z - eye.z;
       const d = Math.hypot(dx, dy, dz), hd = Math.hypot(dx, dz);
       if (hd > reach || d < 1e-3) return;
+      if(alive&&hd>1.2&&!['light','door','hatch'].includes(kind)&&illuminationAt(pt.x,pt.z,snapshotLighting(snap,this.view.props))<.09)return;
       const cos = (dx * dir.x + dy * dir.y + dz * dir.z) / d;
       const ang = Math.acos(Math.max(-1, Math.min(1, cos)));
       const lim = hd < 0.9 ? cone * 1.8 : cone;
@@ -744,6 +755,11 @@ export class Game {
         consider(frontOf(f, f.type === "storageChest" ? 0.75 : 1), 2.35, "bodyHide", { label: `Hide the body in the ${f.fire ? "fireplace" : pretty(f.type)}`, action: { type: "hideBody", id: f.id } }, true, 0.62);
       }
       return best;
+    }
+    if(alive&&!snap.ot){
+      for(const f of LIGHT_SWITCHES)consider(f,2.3,'light',{label:(snap.lightsOff?.[f.id]?'Turn on ':'Turn off ')+roomName(f.room)+' lights',action:{type:'light',id:f.id}},true,.3);
+      for(const f of FLOOR_LAMPS){const id='lamp:'+f.id;consider({...f,y:f.h-.25},2.2,'light',{label:snap.lightsOff?.[id]?'Switch lamp on':'Switch lamp off',action:{type:'light',id}},true,.3);}
+      for(const [key,g]of this.view.props){if(g.userData.p?.kind!=='lamp'||!g.visible)continue;const id='prop:'+key;consider({x:g.position.x,y:g.position.y+.3,z:g.position.z},2.1,'light',{label:snap.lightsOff?.[id]?'Switch desk lamp on':'Switch desk lamp off',action:{type:'light',id}},true,.2);}
     }
     // Props (the living and, once a night, ghosts).
     if (alive || !ghostSpent) {
@@ -812,7 +828,7 @@ export class Game {
       const canStash = active && !active.big && active.kind !== "torch";
       consider(frontOf(f, Math.min(1.2, f.h * 0.55)), 2.35, "cab", { label: canStash ? `Hide the ${active.name} in the ${pretty(f.type)}` : `${open ? "Close" : "Open"} the ${pretty(f.type)}`, action: canStash ? { type: "stashItem", id: f.id } : { type: "cab", id: f.id } }, true, 0.54);
     }
-    if (!snap.ot) for (const task of TASKS.filter(t => t.id !== 'grime')) {
+    if (!snap.ot) for (const task of TASKS.filter(t => t.id !== 'grime'&&t.id!=='haircut')) {
       const done = (p.hud.workProgress?.[task.id] || 0) >= task.steps;
       const hasTool = !task.tool || inv.hands.some(h => h?.kind === task.tool);
       const mine = p.hud.task?.id === task.id;

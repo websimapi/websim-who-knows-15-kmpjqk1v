@@ -126,9 +126,9 @@ export const ItemMethods = {
   release(c, v = { x: 0, y: 0, z: 0 }, at = null, id = null) {
     id = id || c.hands[1] || c.hands[0];
     const p = id && this.props.byId.get(id);
-    if (!p) return;
+    if (!p||!c.hands.includes(id)||p.holder!==c.id) return;
     c.hands = c.hands.map((h) => (h === id ? null : h));
-    p.holder = null; p.pocket = false;
+    p.holder = null; p.pocket = false;p.stash=null;p.ghost=null;p.atBody=false;
     const sp = Math.hypot(v.x || 0, v.y || 0, v.z || 0);
     if (at && Math.hypot(at.x - c.x, at.z - c.z) < 2.6 && sp < 0.1) { p.x = at.x; p.z = at.z; p.y = Math.max(at.y + p.r + 0.02, p.r); }
     p.vx = v.x || 0; p.vy = v.y || 0; p.vz = v.z || 0;

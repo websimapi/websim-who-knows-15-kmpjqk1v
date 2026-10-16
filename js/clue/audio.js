@@ -70,25 +70,75 @@ export function spatialSfx(name, vol, pan = 0, occluded = false) {
   } catch { sfx(name, vol * (occluded ? 0.4 : 1)); }
 }
 
-let speechGen = 0;
-let speechBusy = false;
-export function speak(text, voice) {
-  if (muted || !text || !window.websim?.textToSpeech) return Promise.resolve();
-  stopSpeak();
-  const g = speechGen;
-  speechBusy = true;
-  return window.websim.textToSpeech({ text, voice: voice || "en-female" })
-    .catch((e) => { if (g === speechGen) console.warn("TTS unavailable", e?.message || e); })
-    .finally(() => { if (g === speechGen) speechBusy = false; });
+let speechCancel=null;
+let speechGen=0,speechBusy=false,speechAudio=null,speechState=null,speechQueue=Promise.resolve(),queuedSpeech=0;
+function speechApi(){try{return window.websim||window.parent?.websim;}catch{return window.websim;}}
+function phonemes(text){
+  const sounds=[];const map={a:'aa',e:'E',i:'I',o:'O',u:'U',y:'I',p:'PP',b:'PP',m:'PP',f:'FF',v:'FF',t:'DD',d:'DD',k:'kk',g:'kk',q:'kk',c:'kk',j:'CH',s:'SS',z:'SS',n:'nn',l:'nn',r:'RR',w:'U',h:'aa'};
+  const input=text.toLowerCase();
+  for(let i=0;i<input.length;i++){
+    const startChar=i,pair=input.slice(i,i+2);let shape,weight=1;
+    if(['th','sh','ch','oo','ee','ph'].includes(pair)){shape={th:'TH',sh:'CH',ch:'CH',oo:'U',ee:'I',ph:'FF'}[pair];i++;weight=1.5;}
+    else {shape=map[input[i]]||'sil';weight=/[.,!?;:]/.test(input[i])?2.3:input[i]===' '?.6:1;}
+    sounds.push({shape,weight,startChar,endChar:i+1});
+  }
+  const total=sounds.reduce((s,p)=>s+p.weight,0)||1;let cursor=0;
+  return sounds.map(p=>{const start=cursor/total;cursor+=p.weight;return{...p,start,end:cursor/total};});
 }
-// Inner thoughts are ephemeral. Never build an audible backlog while the
-// player moves through several observations or opens a conversation.
-export function narrate(text, voice) {
-  if (muted || !text || !window.websim?.textToSpeech || speechBusy) return false;
-  const g = speechGen;
-  speechBusy = true;
-  return window.websim.textToSpeech({ text, voice: voice || "en-female" })
-    .catch((e) => { if (g === speechGen) console.warn("TTS unavailable", e?.message || e); })
-    .finally(() => { if (g === speechGen) speechBusy = false; });
+export function speechPose(characterId){
+  const s=speechState;
+  if(s?.native&&s.id===characterId){
+    if(!s.playing||!window.speechSynthesis.speaking||window.speechSynthesis.paused)return {};
+    // Word boundary events are optional for device voices. Keep advancing through
+    // the utterance when a voice omits them instead of freezing at its first space.
+    const elapsed=(performance.now()-s.boundaryAt)/1000;
+    const char=Math.min(s.text.length-.001,s.boundaryIndex+elapsed*13* s.utterance.rate),shape=s.timeline.find(p=>char>=p.startChar&&char<p.endChar)?.shape;
+    const pose=shape&&shape!=='sil'?{[shape]:.68}:{};document.body.dataset.speechMouth=shape||'sil';return pose;
+  }
+  if(!s||s.id!==characterId||s.audio.paused||!Number.isFinite(s.audio.duration)||!s.audio.duration)return {};
+  let amplitude=.65;
+  if(s.analyser){s.analyser.getFloatTimeDomainData(s.samples);let power=0;for(const v of s.samples)power+=v*v;const rms=Math.sqrt(power/s.samples.length);s.rmsPeak=Math.max(.008,rms,(s.rmsPeak||.02)*.995);amplitude=Math.min(1,Math.max(0,(rms-.0006)/s.rmsPeak*1.35));}
+  s.audio.dataset.mouthLevel=amplitude.toFixed(3);
+  if(amplitude<.025)return {};
+  const t=s.audio.currentTime/s.audio.duration,at=s.timeline.findIndex(p=>t<p.end),index=at<0?s.timeline.length-1:at,now=s.timeline[index];
+  if(!now||now.shape==='sil')return {};
+  const pose={[now.shape]:amplitude*.8},fraction=(t-now.start)/Math.max(.001,now.end-now.start),next=s.timeline[index+1];
+  if(next&&next.shape!=='sil'&&fraction>.65){const mix=(fraction-.65)/.35*.4;pose[now.shape]*=1-mix;pose[next.shape]=(pose[next.shape]||0)+amplitude*mix;}
+  return pose;
 }
-export function stopSpeak() { speechGen++; speechBusy = false; try { window.speechSynthesis?.cancel(); } catch {} }
+async function playNativeSpeech(text,voice,id,g){
+  if(!window.speechSynthesis||!window.SpeechSynthesisUtterance)return false;
+  window.speechSynthesis.cancel();
+  return new Promise(resolve=>{
+    const utterance=new SpeechSynthesisUtterance(text);utterance.lang='en-US';utterance.rate=.96;utterance.volume=.9;
+    const voices=window.speechSynthesis.getVoices().filter(v=>v.lang.startsWith('en')),female=/female/.test(voice||''),candidate=voices.find(v=>(female?/zira|samantha|victoria|female|aria/i:/david|daniel|alex|\bmale\b|guy/i).test(v.name));if(candidate)utterance.voice=candidate;
+    const state={native:true,id,text,utterance,timeline:phonemes(text),playing:false,boundaryIndex:0,boundaryAt:performance.now()};speechState=state;
+    let finished=false;const done=ok=>{if(finished)return;finished=true;if(speechState===state)speechState=null;if(speechCancel===cancel)speechCancel=null;document.body.dataset.speechState=ok?'finished':'unavailable';resolve(ok);};const cancel=()=>done(false);speechCancel=cancel;
+    utterance.onstart=()=>{if(g!==speechGen){done(false);return;}state.playing=true;state.boundaryAt=performance.now();document.body.dataset.speechState='playing-native';};
+    utterance.onboundary=e=>{state.boundaryIndex=e.charIndex;state.boundaryAt=performance.now();};utterance.onend=()=>done(true);utterance.onerror=()=>done(false);
+    if(g===speechGen){window.speechSynthesis.speak(utterance);setTimeout(()=>{if(!state.playing)done(false);},8000);}else done(false);
+  });
+}
+async function playSpeech(text,voice,id,g){
+  if(g!==speechGen)return;speechBusy=true;
+  try{
+    const api=speechApi();const result=api?.textToSpeech?await api.textToSpeech({text,voice:voice||'en-female'}):null;
+    if(g!==speechGen||muted)return;
+    if(!result?.url){await playNativeSpeech(text,voice,id,g);return;}
+    const audio=new Audio();audio.crossOrigin='anonymous';audio.src=result.url;audio.volume=.88;audio.hidden=true;audio.dataset.character=id||'narration';audio.dataset.speech='tts';document.body.append(audio);speechAudio=audio;document.body.dataset.speechState='playing-audio';
+    const state={id,audio,timeline:phonemes(text),analyser:null};speechState=state;
+    let source;
+    try{audioContext ||= new (window.AudioContext||window.webkitAudioContext)();await audioContext.resume();source=audioContext.createMediaElementSource(audio);const analyser=audioContext.createAnalyser();analyser.fftSize=512;source.connect(analyser).connect(audioContext.destination);state.analyser=analyser;state.samples=new Float32Array(analyser.fftSize);}catch{}
+    const played=await new Promise(resolve=>{let finished=false;const done=ok=>{if(finished)return;finished=true;source?.disconnect();audio.remove();document.body.dataset.speechState=ok?'finished':'unavailable';if(speechState===state)speechState=null;if(speechAudio===audio)speechAudio=null;resolve(ok);};audio.onended=()=>done(true);audio.onerror=()=>done(false);audio.onpause=()=>{if(g!==speechGen)done(false);};audio.play().catch(()=>done(false));});
+    if(!played&&g===speechGen)await playNativeSpeech(text,voice,id,g);
+  }catch(e){if(g===speechGen){console.warn('TTS audio unavailable; trying device speech',e?.message||e);await playNativeSpeech(text,voice,id,g);}}
+  finally{if(g===speechGen)speechBusy=false;}
+}
+export function speak(text,voice,characterId){
+  if(muted||!text)return Promise.resolve();
+  const g=speechGen;queuedSpeech++;
+  const job=speechQueue.then(()=>playSpeech(text,voice,characterId,g)).finally(()=>{if(g===speechGen)queuedSpeech=Math.max(0,queuedSpeech-1);});speechQueue=job.catch(()=>{});return job;
+}
+// Narration never drives a character mouth or builds a backlog.
+export function narrate(text,voice){if(speechBusy||queuedSpeech)return false;return speak(text,voice,null);}
+export function stopSpeak(){speechGen++;speechCancel?.();speechCancel=null;speechBusy=false;queuedSpeech=0;speechState=null;const a=speechAudio;speechAudio=null;a?.pause();speechQueue=Promise.resolve();try{window.speechSynthesis?.cancel();}catch{}}

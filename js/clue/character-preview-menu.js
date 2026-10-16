@@ -7,22 +7,25 @@ function toggle() {
   if (!dialog) {
     dialog = document.createElement('dialog');dialog.id = 'characterPreviewMenu';
     dialog.setAttribute('aria-label', 'Character preview menu');
-    dialog.innerHTML = '<header><label>Character preview <select aria-label="Preview character"><option value="blue">Tomas Voss / Blue</option><option value="violet">Leonie Vesper / Violet</option><option value="white">Dr. Elian Frost / White</option><option value="green">Sera Moss / Green</option></select></label><button type="button" aria-label="Close character preview">Close</button></header><iframe title="Tomas Voss character preview"></iframe>';
+    dialog.innerHTML = '<header><label>Character preview <select aria-label="Preview character"><option value="blue">Tomas Voss / Blue</option><option value="violet">Leonie Vesper / Violet</option><option value="white">Dr. Elian Frost / White</option><option value="green">Sera Moss / Green</option><option value="red">Mara Vale / Red</option><option value="yellow">Ivo Quill / Yellow</option><option value="copper">Nessa Calder / Copper</option><option value="teal">Basil Reed / Teal</option><option value="butler">Mr. Grimsby / Butler</option></select></label><button type="button" aria-label="Close character preview">Close</button></header><iframe title="Tomas Voss character preview"></iframe>';
     function showCharacter(id) {
-      const url = new URL(id === 'green' ? './green-preview.html' : id === 'white' ? './white-preview.html' : id === 'violet' ? './violet-preview.html' : './blue-preview.html', document.baseURI);
+      const fallback=['red','yellow','copper','teal','butler'].includes(id);
+      const url = new URL(fallback ? './hair-preview.html' : id === 'green' ? './green-preview.html' : id === 'white' ? './white-preview.html' : id === 'violet' ? './violet-preview.html' : './blue-preview.html', document.baseURI);
+      if(fallback)url.searchParams.set('character',id);
       const version = new URL(location.href).searchParams.get('v');
       if (version) url.searchParams.set('v', version);
       const frame = dialog.querySelector('iframe');
-      frame.title = id === 'green' ? 'Sera Moss character preview' : id === 'white' ? 'Dr. Elian Frost character preview' : id === 'violet' ? 'Leonie Vesper character preview' : 'Tomas Voss character preview';
-      frame.src = url.href;
+      frame.title = fallback ? 'Guest hair character preview' : id === 'green' ? 'Sera Moss character preview' : id === 'white' ? 'Dr. Elian Frost character preview' : id === 'violet' ? 'Leonie Vesper character preview' : 'Tomas Voss character preview';
+      frame.dataset.url=url.href;frame.src = url.href;
     }
     dialog.querySelector('select').onchange = event => showCharacter(event.target.value);
     showCharacter('blue');
+    dialog.addEventListener('close',()=>{dialog.querySelector('iframe').src='about:blank';});
     dialog.querySelector('button').onclick = () => dialog.close();
     dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close(); });
     document.body.append(dialog);
   }
-  if (dialog.open) dialog.close(); else dialog.showModal();
+  if (dialog.open) dialog.close(); else {const frame=dialog.querySelector('iframe');if(frame.src==='about:blank')frame.src=frame.dataset.url;dialog.showModal();}
 }
 function shortcut(event) {
   if (event.ctrlKey && !event.altKey && !event.metaKey && (event.code === 'Backquote' || event.key === '`') && !event.repeat) {

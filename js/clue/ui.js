@@ -7,6 +7,7 @@ import { speak, narrate, stopSpeak, sfx } from "./audio.js";
 import { TASK_BY_ID, TOOL_NAME } from './tasks.js';
 import { PoolPanel } from './pool-ui.js';
 import { TaskPanel } from './task-ui.js';
+import {BarberPanel} from './barber-ui.js';
 
 const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -91,6 +92,7 @@ export class PlayerHud {
     this.$ = (s) => this.el.querySelector(s);
     this.poolPanel = new PoolPanel(this.el, this.send, (event, task) => this.taskReflection(event, task));
     this.taskPanel = new TaskPanel(this.el, this.send, (event, task) => this.taskReflection(event, task));
+    this.barberPanel=new BarberPanel(this.el,this.send);
     this.focus = new Focus();
     this.tab = "sheet";
     this.$(".book-x").onclick = () => this.toggleBook(false);
@@ -115,6 +117,10 @@ export class PlayerHud {
   // ---------- messages from the rules engine ----------
   onMsg(m) {
     switch (m.type) {
+      case 'hairOffer':this.barberPanel.offer(m.actor);break;
+      case 'barberOpen':this.barberPanel.open(m).catch(error=>{console.error('Haircut view failed',error);this.barberPanel.close(true);});break;
+      case 'barberProgress':this.barberPanel.progress(m.progress);break;
+      case 'barberClose':this.barberPanel.close();break;
       case "role": this.role = m.killer ? "killer" : "savior"; this.partner = m.partner || null; this.duo = !!m.duo; this.lastDay = m.lastDay || LAST_DAY; this.renderRole(); this.showRoleCard(); break;
       case 'team': this.teamWith = m.on ? m.with : null; this.renderTeam(); break;
       case 'task': this.task = m.task; this.workProgress = m.task?.progress || {}; this.renderTask(); if (m.task?.id === 'pool' && m.task.complete) this.poolPanel.finishReflection(); break;
@@ -446,7 +452,7 @@ export class PlayerHud {
       line = v.line; options = v.options;
       lineEl.dataset.emotion = v.emotion;
       this.send({ type: "spokeAs", convo: m.id, text: line });
-      speechFinished = speak(line, partner.voice);
+      speechFinished = speak(line, partner.voice, m.with);
     } else if (options?.length) {
       lineEl.textContent = line || `You approach ${partner.short}.`;
       lineEl.classList.add("thinking");
@@ -460,17 +466,19 @@ export class PlayerHud {
     }
     lineEl.classList.remove("thinking");
     lineEl.textContent = line || (m.speaker ? "…" : `You approach ${partner.short}.`);
-    if (m.instantAi) speechFinished = speak(line, partner.voice);
+    if (m.instantAi) speechFinished = speak(line, partner.voice, m.with);
     const buttons = options.map((o, i) => {
       const b = h("button", `opt t-${o.tone || "neutral"}`, `<span class="n">${i + 1}</span>${o.kind ? `<span class="kind k-${o.kind.toLowerCase()}">${esc(o.kind)}</span>` : ""}<span class="txt">${esc(o.text)}</span>`);
       b.onclick = () => {
         if (!this.convo || this.convo.id !== m.id) return;
         this.stopConvoTimer();
         stopSpeak();
+        const playerSpeech=speak(o.text, SUSPECT_BY_ID[this.char]?.voice, this.char);
+        playerSpeech.finally(()=>{if(this.convo?.id===m.id)this.replyShotUntil=performance.now()+250;});
         this.send({ type: "choose", convo: m.id, i: o.i ?? i, text: o.text });
         // Hold the reply on the player's face long enough to see it spoken,
         // even when the other guest's answer arrives in the next snapshot.
-        this.replyShotUntil = performance.now() + 1850;
+        this.replyShotUntil = performance.now() + 45000;
         nameEl.innerHTML = chip(this.char);
         lineEl.textContent = o.text;
         opts.innerHTML = "";
@@ -633,6 +641,7 @@ export class PlayerHud {
 
   // ---------- per-frame input ----------
   handleInput(inp) {
+    if(this.barberPanel.active)return this.barberPanel.input(inp);
     if (this.poolPanel.active) return this.poolPanel.input(inp);
     if (this.taskPanel.active) return this.taskPanel.input(inp);
     if (this.bodyMenuVictim) {

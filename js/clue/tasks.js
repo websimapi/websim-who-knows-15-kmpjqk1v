@@ -9,6 +9,7 @@ import { spawnLooseItem } from './items.js';
 
 const station = (id, icon, title, room, x, z, y, steps, verb, extra = {}) => ({ id, icon, title, room, ...local(room, x, z), y, steps, verb, stand: [0, 1.05], ...extra });
 export const TASKS = [
+  station('haircut','✂','Cut hair','bathroom',6.8,5.4,1.2,1,'Cut hair',{tool:'kitchen_knife',how:'Hold the Kitchen Knife. Share your task in dialogue and request permission, or attempt a stealth cut. Trim 15% of a living human groom. Robots and corpses are ineligible.'}),
   { id: 'grime', icon: '✧', title: 'Clean a dirt stain', room: null, steps: 1, verb: 'Clean the dirt stain', how: 'Find the dirt on the floor. Pour bleach over it, then wipe the wet patch with a rag.' },
   { id: 'pool', icon: '☠', title: 'Pocket the skull ball', room: 'game', ...POOL, steps: 1, verb: 'Play skull pool', stand: [0, 1.25],
     how: 'Line up the cue and sink the skull ball in any pocket.' },
@@ -66,7 +67,7 @@ export const TaskMethods = {
     this.taskSettledDay = null;
     for (const c of this.chars.values()) {
       c.workProgress = {}; c.taskActionAt = -99;
-      const available = TASKS.filter(t => t.id !== c.task?.id);
+      const available = TASKS.filter(t => t.id !== c.task?.id&&(t.id!=='haircut'||this.canReceiveHairTask(c)));
       c.task = !c.alive || c.isKiller ? null : { day: this.day, id: Math.random() < 0.2 ? 'none' : available[Math.floor(Math.random() * available.length)].id, complete: false };
       if (c.task?.id === 'bathroom') this.spawnTaskRag();
       if (c.task?.id === 'grime') this.spawnGrimeTask(c);
@@ -117,7 +118,7 @@ export const TaskMethods = {
   },
   toolInHand(c, kind) { return this.handIds(c).map(pid => this.props.byId.get(pid)).find(p => p?.kind === kind && !p.used) || null; },
   canWork(c, task) {
-    if (!task || task.id === 'pool' || task.id === 'grime' || !c.alive || c.ko || c.convo || this.phase !== 'day' || this.overtime) return false;
+    if (!task || task.id === 'pool' || task.id === 'grime' || task.id==='haircut' || !c.alive || c.ko || c.convo || this.phase !== 'day' || this.overtime) return false;
     if (Math.hypot(c.x - task.x, c.z - task.z) > 2.9 || !losClear(c.x, c.z, task.x, task.z, this.doors)) return false;
     if (task.tool && !this.toolInHand(c, task.tool)) { this.toast(c, `Hold ${TOOL_NAME[task.tool]} to ${task.title.toLowerCase()}.`); return false; }
     return true;
@@ -176,6 +177,7 @@ export const TaskMethods = {
   },
   pursueTask(c) {
     const task = c.task && TASK_BY_ID[c.task.id];
+    if(task?.id==='haircut'&&!c.task.complete)return this.pursueHairTask(c);
     if (task?.id === 'grime') {
       const stain = this.stains.find(s => s.id === c.task.stain);
       if (!stain || stain.s === 3) return false;

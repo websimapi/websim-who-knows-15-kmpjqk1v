@@ -68,6 +68,7 @@ F("bathroom", "toilet", 12.15, 3.2, 0.78, 1.0, 0.82, { rot: -HALF });
 F("bathroom", "shower", 0.95, 5.1, 1.75, 1.75, 2.25);
 F("bathroom", "towelRack", 12.6, 11.4, 0.8, 0.25, 1.4, { rot: -HALF, solid: false });
 F("bathroom", "hamper", 4.0, 10.8, 0.8, 0.8, 0.9);
+F('bathroom','chair',6.8,5.4,.82,.95,1.25,{id:'barber_chair',style:'barber',seat:[{dx:0,dz:0,h:.54}]});
 F("bathroom", "bathMat", 8.5, 10.5, 2.5, 1.0, 0, { solid: false });
 
 // ---------- Dining 17.6 × 15.4 (notch top-right), doors top x 13.2–15.4, right z 8.8–11 ----------

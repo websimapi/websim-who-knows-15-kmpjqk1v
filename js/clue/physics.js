@@ -3,9 +3,35 @@
 // Pure logic, world metres.
 import { WALL_H } from "./data.js";
 import { WALLS, DOOR_LIST, leafSeg } from "./nav.js";
-import { SOLIDS, POOL } from "./layout.js";
+import { SOLIDS, POOL,FURN_BY_ID } from "./layout.js";
 
 const G = 9.8;
+// Walkers use broad furniture bounds; loose objects need the actual seat/back heights.
+const PROP_SOLIDS=SOLIDS.flatMap(b=>{
+  const f=FURN_BY_ID[b.id],seat=f?.seat?.[0]?.h;
+  if(!Number.isFinite(seat)||b.y2-seat<.12)return [b];
+  const boxes=[];
+  const part=(x,z,w,d,y1,y2)=>{
+    const sn=Math.sin(f.rot),cs=Math.cos(f.rot),cx=f.x+x*cs+z*sn,cz=f.z-x*sn+z*cs,hw=(Math.abs(cs)*w+Math.abs(sn)*d)/2,hd=(Math.abs(sn)*w+Math.abs(cs)*d)/2;
+    boxes.push({...b,x1:cx-hw,x2:cx+hw,z1:cz-hd,z2:cz+hd,y1,y2});
+  };
+  part(0,0,f.w,f.d,Math.max(0,seat-.13),seat);
+  part(0,-f.d*.45,f.w,.09,seat,b.y2);
+  for(const x of [-1,1])for(const z of [-1,1])part(x*f.w*.39,z*f.d*.39,.055,.055,0,seat-.1);
+  if(['armchair','sofa','settee'].includes(f.type)||f.id==='barber_chair')for(const side of [-1,1])part(side*f.w*.45,0,.1,f.d,seat,Math.min(b.y2,seat+.26));
+  return boxes;
+});
+// Sleeping is valid only while a real floor or furniture surface supports the sphere.
+export function propSupported(p,tolerance=.012){
+  if(Math.abs(p.y-p.r)<=tolerance)return true;
+  for(const b of PROP_SOLIDS){
+    const dx=p.x-Math.max(b.x1,Math.min(b.x2,p.x)),dz=p.z-Math.max(b.z1,Math.min(b.z2,p.z)),horizontal=dx*dx+dz*dz;
+    if(horizontal>p.r*p.r)continue;
+    const contact=b.y2+Math.sqrt(Math.max(0,p.r*p.r-horizontal));
+    if(Math.abs(p.y-contact)<=tolerance)return true;
+  }
+  return false;
+}
 
 function segPush(b, w, r) {
   const vx = w.x2 - w.x1, vz = w.z2 - w.z1, l = vx * vx + vz * vz;
@@ -30,7 +56,7 @@ export class Props {
   constructor(list) {
     this.list = list; // [{id, kind, x,y,z, r, ...}]
     this.byId = new Map(list.map((p) => [p.id, p]));
-    for (const p of list) Object.assign(p, { vx: 0, vy: 0, vz: 0, yaw: p.yaw ?? Math.random() * 6.28, tilt: 0, roll: 0, sleep: false, holder: null, ghost: null, moved: true });
+    for (const p of list) Object.assign(p, { vx: 0, vy: 0, vz: 0, yaw: p.yaw ?? Math.random() * 6.28, tilt: 0, roll: 0, sleep: propSupported(p), holder: null, ghost: null, moved: true });
   }
   // impacts: [{prop, speed, hitChar?}]
   step(dt, doors, walkers) {
@@ -38,6 +64,7 @@ export class Props {
     const sub = 3, h = dt / sub;
     for (const p of this.list) {
       if (p.holder || p.hidden || p.stash) { p.sleep = false; continue; }
+      if(p.sleep&&!propSupported(p)){p.sleep=false;p.moved=true;}
       if (p.sleep) {
         // Walkers nudge sleeping props they step into.
         for (const w of walkers) if (Math.abs(w.x - p.x) < 0.5 && Math.abs(w.z - p.z) < 0.5 && p.y < 0.5 && (w.mv || 0) > 0.4) {
@@ -65,12 +92,16 @@ export class Props {
           if (n) impact = Math.max(impact, reflect(p, n.nx, 0, n.nz, 0.3));
         }
         // furniture boxes (sphere vs AABB)
-        for (const b of SOLIDS) {
+        for (const b of PROP_SOLIDS) {
           if (p.x < b.x1 - p.r || p.x > b.x2 + p.r || p.z < b.z1 - p.r || p.z > b.z2 + p.r || p.y > b.y2 + p.r || p.y < b.y1 - p.r) continue;
           const cx = Math.max(b.x1, Math.min(b.x2, p.x)), cy = Math.max(b.y1, Math.min(b.y2, p.y)), cz = Math.max(b.z1, Math.min(b.z2, p.z));
           let dx = p.x - cx, dy = p.y - cy, dz = p.z - cz, d = Math.hypot(dx, dy, dz);
           if (d >= p.r) continue;
-          if (d < 1e-6) { dy = 1; dx = dz = 0; d = 1; p.y = b.y2 + p.r; }
+          if (d < 1e-6) {
+            // Resolve through the nearest face, rather than lifting every trapped object to the furniture top.
+            const faces=[{depth:p.x-b.x1,nx:-1,ny:0,nz:0},{depth:b.x2-p.x,nx:1,ny:0,nz:0},{depth:p.y-b.y1,nx:0,ny:-1,nz:0},{depth:b.y2-p.y,nx:0,ny:1,nz:0},{depth:p.z-b.z1,nx:0,ny:0,nz:-1},{depth:b.z2-p.z,nx:0,ny:0,nz:1}];
+            const face=faces.reduce((a,b)=>a.depth<b.depth?a:b);dx=face.nx;dy=face.ny;dz=face.nz;d=1;p.x+=dx*(face.depth+p.r);p.y+=dy*(face.depth+p.r);p.z+=dz*(face.depth+p.r);
+          }
           else { p.x = cx + dx / d * p.r; p.y = cy + dy / d * p.r; p.z = cz + dz / d * p.r; }
           const ny = dy / d;
           impact = Math.max(impact, reflect(p, dx / d, ny, dz / d, 0.3));

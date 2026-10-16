@@ -190,6 +190,15 @@ function framedStorage(g, parts, w, d, h, chest = false) {
 
 function chairMesh(style) {
   const c = new THREE.Group();
+  if(style==='barber'){
+    cyl(.36,.40,.09,MAT.iron,0,.045,0,c,48);cyl(.075,.09,.44,MAT.steel,0,.28,0,c,24);
+    cushion(.60,.13,.60,MAT.leather,0,.48,0,c,.06);box(.62,.62,.10,MAT.leather,0,.62,-.26,c);
+    cushion(.36,.12,.12,MAT.leather,0,1.22,-.27,c,.04);
+    for(const sign of [-1,1]){box(.035,.28,.035,MAT.steel,sign*.35,.54,.10,c);cushion(.11,.075,.56,MAT.leather,sign*.35,.80,0,c,.025);}
+    box(.46,.045,.27,MAT.steel,0,.23,.46,c);box(.035,.25,.035,MAT.steel,0,.05,.42,c);
+    for(let x=-.22;x<=.22;x+=.11)for(let y=.76;y<1.18;y+=.16){const stud=new THREE.Mesh(new THREE.SphereGeometry(.009,8,6),MAT.gold);stud.position.set(x,y,-.201);c.add(stud);}
+    return c;
+  }
   const mats = { dining: [MAT.darkWood, MAT.velvet], stool: [MAT.oak, MAT.oak], gilt: [MAT.gold, MAT.red], wicker: [MAT.wicker, MAT.cloth], leather: [MAT.darkWood, MAT.leather], bench: [MAT.black, MAT.leather] };
   const [fr, seat] = mats[style] || mats.dining;
   if (style === "stool") {

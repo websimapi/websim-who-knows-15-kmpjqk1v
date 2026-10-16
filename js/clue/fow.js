@@ -36,8 +36,8 @@ const sampleIndex = (x, z) => {
 };
 
 // Per-view state: { vis: Float32Array, key }
-export function computeVis(state, ex, ez, doors, force = false) {
-  const key = `${Math.round(ex * 3)},${Math.round(ez * 3)},${doors.map((d) => Math.round(d * 8)).join("")}`;
+export function computeVis(state, ex, ez, doors, force = false,illumination=null,lightKey='') {
+  const key = `${lightKey}:${Math.round(ex * 3)},${Math.round(ez * 3)},${doors.map((d) => Math.round(d * 8)).join("")}`;
   if (!force && state.vis && state.key === key) return state.vis;
   state.key = key;
   const vis = state.vis || (state.vis = new Float32Array(W * H));
@@ -50,6 +50,7 @@ export function computeVis(state, ex, ez, doors, force = false) {
     if (d > 30) { vis[k] = 0; continue; }
     vis[k] = losClear(ex, ez, SX[k], SZ[k], doors) ? 1 : 0;
   }
+  if(illumination)for(let k=0;k<W*H;k++)if(vis[k]>0){const d=Math.hypot(SX[k]-ex,SZ[k]-ez),light=illumination(SX[k],SZ[k]);vis[k]*=d<1.2?1:Math.max(.03,Math.min(1,(.15+Math.sqrt(light))*(1-Math.max(0,d-1.5)/(3+22*Math.sqrt(light)))));}
   return vis;
 }
 export function uploadVis(vis) {

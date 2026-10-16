@@ -128,7 +128,7 @@ document.addEventListener("keydown", (event) => { if (settingsOpen && event.key 
 
 // ---------- title demo ----------
 function startDemo(restartCamera = false) {
-  demo = new Match({ demo: true, io: { broadcast: (m) => { if (m.type === "say") view.bubble(m.id, m.text, m.dur); } } });
+  demo = new Match({ demo: true, avatarMode: 'humans', io: { broadcast: (m) => { if (m.type === "say") view.bubble(m.id, m.text, m.dur); } } });
   view.resetWorld();
   view.bloodSeen = false;
   view.names = {};
@@ -290,7 +290,7 @@ function beginLocal(locals) {
   game?.destroy();
   for (const c of view.chalk.values()) c.removeFromParent();
   view.chalk.clear();
-  game = new Game({ view, mode: "local", locals, onExit: exitToTitle, onAgain: () => beginLocal(locals) });
+  game = new Game({ view, mode: "local", locals, avatarMode:$('#localAvatarMode').value, onExit: exitToTitle, onAgain: () => beginLocal(locals) });
 }
 function exitToTitle() {
   if (net) { net.inRound = false; net.cancelRecovery(); }
@@ -399,6 +399,8 @@ function renderLobby(l) {
     b.onclick = () => net.settings(Number(b.dataset.k));
   });
   kEl.title = host ? "" : "The host chooses";
+  const avatarSelect=$('#lobbyAvatarMode');avatarSelect.value=l.avatarMode||'mixed';avatarSelect.disabled=!host;
+  avatarSelect.onchange=()=>net.settings(l.killers||1,avatarSelect.value);
   $("#lobbyMembers").innerHTML = l.members.map((m) => {
     const label = `@${esc(m.username)}${m.id === l.host ? " · host" : ""}${m.char ? ` · ${esc(SUSPECT_BY_ID[m.char]?.short || m.char)}` : " · choosing"}`;
     const profile = m.username === "guest" ? `<span class="member-profile"><span class="avatar-pill">${avatar(m.username)}</span><span>${label}</span></span>` : `<a class="member-profile" href="https://websim.com/@${encodeURIComponent(m.username)}" target="_blank" rel="noopener"><span class="avatar-pill">${avatar(m.username)}</span><span>${label}</span></a>`;
@@ -425,7 +427,7 @@ function beginOnline(lobby) {
     const remote = lobby.members.filter((m) => m.id !== net.id).map((m) => ({ char: m.char, conn: m.id, name: "@" + m.username }));
     if (!me?.char || !SUSPECTS.some((s) => s.id === me.char)) throw new Error("The server did not assign this player a character.");
     game = new Game({
-      view, net, names, mode: host ? "host" : "client", locals: [{ char: me.char, device: "all" }], remote: host ? remote : [], killers: lobby.killers || 1,
+      view, net, names, mode: host ? "host" : "client", locals: [{ char: me.char, device: "all" }], remote: host ? remote : [], killers: lobby.killers || 1, avatarMode:lobby.avatarMode||'mixed',
       onExit: exitToTitle, onAgain: () => { exitToTitle(); openOnline(); },
     });
     net.inRound = true;
@@ -470,15 +472,21 @@ function menuInput() {
 
 // ---------- loop ----------
 let last = performance.now();
+let frameStats={start:performance.now(),frames:0,work:0,render:0,peak:0};
 function frame(now) {
+  const workStart=performance.now();
   now ??= performance.now();
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   beginFrame();
+  const previewOpen=!!document.querySelector('#characterPreviewMenu[open]');
+  if(previewOpen&&!game){frameStats={start:performance.now(),frames:0,work:0,render:0,peak:0};return;}
   if (game) game.update(dt);
   else if (demo && liveSnap) {
-    if (liveSeed) { view.apply(liveSeed, 0, true); liveSeed = null; }
-    view.apply(interpolateSnapshot(liveSamples, performance.now(), 240) || liveSnap, dt);
+    if (liveSeed) { view.apply({ ...liveSeed, avatarMode: 'humans' }, 0, true); liveSeed = null; }
+    // The title is an all-human showcase, including when spectating a robot lobby.
+    // Copy the display snapshot so the remote match and lobby policy stay authoritative.
+    view.apply({ ...(interpolateSnapshot(liveSamples, performance.now(), 240) || liveSnap), avatarMode: 'humans' }, dt);
     menuInput();
   } else if (demo) {
     demo.update(dt);
@@ -486,7 +494,20 @@ function frame(now) {
     view.apply(demo.snapshot(), dt);
     menuInput();
   } else menuInput();
-  if (game || demo) view.render(dt);
+  const renderStart=performance.now();
+  if ((game || demo)&&!previewOpen) view.render(dt);
+  const frameWork=performance.now()-workStart;frameStats.frames++;frameStats.work+=frameWork;frameStats.peak=Math.max(frameStats.peak,frameWork);frameStats.render+=performance.now()-renderStart;
+  const reportElapsed=performance.now()-frameStats.start;
+  if(reportElapsed>=2000){
+    document.body.dataset.gameFps=(frameStats.frames*1000/reportElapsed).toFixed(1);
+    document.body.dataset.frameWorkMs=(frameStats.work/frameStats.frames).toFixed(2);
+    document.body.dataset.framePeakMs=frameStats.peak.toFixed(2);
+    document.body.dataset.renderWorkMs=(frameStats.render/frameStats.frames).toFixed(2);
+    document.body.dataset.renderTriangles=String(view.renderer.info.render.triangles);
+    document.body.dataset.renderCalls=String(view.renderer.info.render.calls);
+    document.body.dataset.shaderPrograms=String(view.renderer.info.programs.length);
+    frameStats={start:performance.now(),frames:0,work:0,render:0,peak:0};
+  }
   $("#title").classList.toggle("fp-spectate", screen === "title" && !view.views[0]?.titleOrbit);
   const pads = connectedPads().length;
   $("#padsHint").textContent = pads ? `${pads} controller${pads > 1 ? "s" : ""} connected` : touchDevice ? "Touch controls supported" : "Keyboard · mouse · controllers supported";
@@ -516,10 +537,16 @@ async function setupVR() {
 }
 
 (async () => {
-  try { await Promise.all([view.init(), loadSouls()]); }
-  catch (e) { console.error(e); }
+  try {
+    await Promise.all([view.init(), loadSouls()]);
+    await view.prepareGuests(message=>{if($('#guestLoading'))$('#guestLoading').textContent=message;});
+    document.querySelectorAll('[data-go]').forEach(button=>button.disabled=false);
+    $('#guestLoading')?.remove();
+  }
+  catch (e) { console.error(e);if($('#guestLoading'))$('#guestLoading').textContent='Guests could not load. Please reload the game.';return; }
   startDemo(true);
   show("title");
+  last=performance.now();frameStats={start:last,frames:0,work:0,render:0,peak:0};
   view.renderer.setAnimationLoop((t) => frame(t));
   startAmbience();
   startGameMusic();

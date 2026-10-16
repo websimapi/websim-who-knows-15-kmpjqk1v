@@ -138,7 +138,7 @@ export class Net {
     this.log("game-failed", { stage: "initialize", reason: detail });
     this.send({ type: "startupFailed", reason: detail.slice(0, 300) });
   }
-  settings(killers) { this.send({ type: "settings", killers }); }
+  settings(killers, avatarMode=this.lobby?.avatarMode||'mixed') { this.send({ type: "settings", killers, avatarMode }); }
   leave() { this.send({ type: "leave" }); }
   toHost(data) { return this.send({ type: "wkMatch", to: "host", data }); }
   toAll(data) { return this.send({ type: "wkMatch", to: "all", data }); }

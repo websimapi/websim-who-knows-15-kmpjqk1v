@@ -9,6 +9,7 @@ import { WALLS, DOOR_LIST, DOOR_W, DOOR_H, toWorld } from "./nav.js";
 import { BALL_R } from "./physics.js";
 import { floorTexture, wallTexture, plasterTexture, stoneWallTexture, herringboneTexture, runnerTexture, glowTexture, flameTexture, paintingTexture, windowRainTexture, doorPlaqueTexture } from "./textures.js";
 import { buildFurniture, MAT, box, cyl } from "./furniture3d.js";
+import {LIGHT_SWITCHES,FLOOR_LAMPS} from './lighting.js';
 import { skullBallTexture } from './tasks3d.js';
 
 const W = COLS * CELL, D = ROWS * CELL;
@@ -337,6 +338,7 @@ export function buildMansion(quality = {}) {
   }
 
   // ---------- furniture ----------
+  const controlledMaterials=[],switches=[];
   const cabs = {}, fires = {}, glows = [], pendulums = [], pushHolders = {}, mirrors = [];
   let burner = null;
   for (const f of FURNITURE) {
@@ -355,7 +357,12 @@ export function buildMansion(quality = {}) {
     if (P.burner) burner = P.burner;
     if (P.pendulum) pendulums.push(P.pendulum);
     mirrors.push(...P.mirrors);
-    for (const gl of P.glow) { const p = built.group.localToWorld(new THREE.Vector3(gl.x, gl.y, gl.z)); glows.push({ x: p.x, y: p.y, z: p.z, s: gl.s, room: f.room }); }
+    const control=f.type==='lamp'?'lamp:'+f.id:'room:'+f.room;
+    if(['lamp','chandelier','poolLamp'].includes(f.type))holder.traverse(o=>{
+      if(!o.isMesh||Array.isArray(o.material))return;
+      if(o.material===MAT.glow||o.material===MAT.shade){o.material=o.material.clone();o.userData.noMerge=true;controlledMaterials.push({material:o.material,control,color:o.material.color.clone(),emissive:o.material.emissiveIntensity||0});}
+    });
+    for (const gl of P.glow) { const p = built.group.localToWorld(new THREE.Vector3(gl.x, gl.y, gl.z)); glows.push({ x: p.x, y: p.y, z: p.z, s: gl.s, room: f.room, control }); }
     mergeFixedFurniture(holder, P);
   }
 
@@ -391,7 +398,7 @@ export function buildMansion(quality = {}) {
   const addLight = (x, y, z, color, intensity, room, dist = 16) => {
     const l = new THREE.PointLight(color, intensity, dist, 2);
     l.position.set(x, y, z);
-    l.userData = { base: intensity, room, phase: Math.random() * 10 };
+    l.userData = { base: intensity, room, control:'room:'+room, phase: Math.random() * 10 };
     root.add(l);
     lights.push(l);
     return l;
@@ -408,6 +415,13 @@ export function buildMansion(quality = {}) {
       if (!chand.length) glows.push({ x: p.x, y: WALL_H - 0.5, z: p.z, s: 1.2, room: room.id, pendant: true });
     }
   }
+  for(const f of FLOOR_LAMPS){const light=addLight(f.x,f.h-.2,f.z,0xffcf9a,9,f.room,8);light.userData.control='lamp:'+f.id;}
+  for(const f of LIGHT_SWITCHES){
+    const plate=new THREE.Group();plate.position.set(f.x,f.y,f.z);plate.rotation.y=Math.atan2(f.nx,f.nz);
+    box(.115,.18,.018,MAT.brass,0,0,0,plate);const rocker=box(.065,.10,.025,MAT.cream,0,0,.018,plate);switches.push({rocker,id:f.id});
+    for(const y of [-.071,.071])cyl(.003,.003,.004,MAT.iron,0,y,.013,plate,6);
+    root.add(plate);
+  }
   // Hallway lanterns.
   const hall = regions["."].map(([c, r]) => toWorld(c + 0.5, r + 0.5));
   const picks = [hall[0]];
@@ -419,7 +433,7 @@ export function buildMansion(quality = {}) {
     const g = new THREE.Group();
     cyl(0.01, 0.01, WALL_H - gl.y - 0.15, MAT.iron, 0, 0.15, 0, g, 4);
     const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 0.3, 6, 1, true), lanternMat); cage.material.side = THREE.DoubleSide; g.add(cage);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), MAT.glow); g.add(bulb);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), MAT.glow.clone()); controlledMaterials.push({material:bulb.material,control:'room:'+gl.room,color:bulb.material.color.clone(),emissive:0}); g.add(bulb);
     g.position.set(gl.x, gl.y, gl.z);
     root.add(g);
   }
@@ -481,5 +495,5 @@ export function buildMansion(quality = {}) {
   key.shadow.camera.near = 0.3; key.shadow.camera.far = 18;
   root.add(key); root.add(key.target);
 
-  return { root, ceilings, roof, doors, cabs, pushHolders, fires, burner, stoveLight, balls, lights, glowSprites, pendulums, moon, hemi, key, windows, mirrors };
+  return { controlledMaterials,switches,root, ceilings, roof, doors, cabs, pushHolders, fires, burner, stoveLight, balls, lights, glowSprites, pendulums, moon, hemi, key, windows, mirrors };
 }

@@ -3,23 +3,28 @@
 // ghost form, and a separate posed corpse left where someone died.
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import * as SkeletonUtils from "three/addons/utils/SkeletonUtils.js";
 import { HairMotion } from "./hair-motion.js";
+import { LipMotion } from "./lip-motion.js";
 import { BlinkMotion } from "./blink-motion.js";
+import {installHairAppearance} from './hair-appearance.js';
 import { Haircuts } from "./haircuts.js";
-import { addFallbackHair } from "./fallback-hair.js";
 
-let kitPromise = null;
+const variantPromises=new Map();let baseKitPromise;
+const HUMAN_FILES={blue:'tomas-voss',violet:'leonie-vesper',white:'elian-frost',green:'sera-moss',red:'mara-vale',yellow:'ivo-quill',copper:'nessa-calder',teal:'basil-reed',butler:'mr-grimsby'};
 function prepareKit(gltf, authored = false) {
   const clips = {};
   for (const c of gltf.animations) clips[c.name] = c;
   for (const n of ["agree", "headShake"]) if (clips[n]) {
     const c = clips[n].clone(); THREE.AnimationUtils.makeClipAdditive(c); clips[n + "_add"] = c;
   }
+  const skinGroups=new Map();
   gltf.scene.traverse(o => {
-    if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+    if(o.isSkinnedMesh){if(!skinGroups.has(o.skeleton))skinGroups.set(o.skeleton,skinGroups.size);o.userData.avatarSkinGroup=skinGroups.get(o.skeleton);}
+    if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = !o.isSkinnedMesh;
       o.userData.preserveMaterials = authored;
-      o.userData.fineDetail = authored && /Hair_Strands|Hair_Locks|Bun_Fibers|Eyebrows|Eye_|Freckles/.test(o.name);
+      o.userData.fineDetail = authored && /Hair_Strands|Hair_Locks|Bun_Fibers|Eyebrows|Eye_|_Eyes|Freckles/.test(o.name);
       o.castShadow = !o.userData.fineDetail;
       const materials = Array.isArray(o.material) ? o.material : [o.material];
       if (authored) materials.forEach(m => { m.shadowSide = THREE.FrontSide; });
@@ -27,31 +32,26 @@ function prepareKit(gltf, authored = false) {
   });
   return { scene: gltf.scene, clips, authored };
 }
-export function loadKit() {
-  if (!kitPromise) kitPromise = Promise.all([
-    new GLTFLoader().loadAsync("./models/xbot.glb"),
-    new GLTFLoader().loadAsync("./models/tomas-voss.glb").catch(error => {
-      console.warn("Tomas model could not load; using the base avatar", error); return null;
-    }),
-    new GLTFLoader().loadAsync("./models/leonie-vesper.glb").catch(error => {
-      console.warn("Leonie model could not load; using the base avatar", error); return null;
-    })
-    ,new GLTFLoader().loadAsync("./models/elian-frost.glb").catch(error => {
-      console.warn("Elian model could not load; using the base avatar", error); return null;
-    })
-    ,new GLTFLoader().loadAsync("./models/sera-moss.glb").catch(error => {
-      console.warn("Sera model could not load; using the base avatar", error); return null;
-    })
-  ]).then(([base, blue, violet, white, green]) => {
-    const kit = prepareKit(base);
-    kit.variants = {};
-    if (blue) kit.variants.blue = prepareKit(blue, true);
-    if (violet) kit.variants.violet = prepareKit(violet, true);
-    if (white) kit.variants.white = prepareKit(white, true);
-    if (green) kit.variants.green = prepareKit(green, true);
-    return kit;
-  });
-  return kitPromise;
+export async function loadHumanVariant(kit,id){
+  if(!HUMAN_FILES[id])return null;
+  if(!variantPromises.has(id))variantPromises.set(id,new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync('./models/'+HUMAN_FILES[id]+'.glb').then(gltf=>prepareKit(gltf,true)).catch(error=>{console.warn('Human model could not load: '+id,error);return null;}));
+  const variant=await variantPromises.get(id);if(variant)kit.variants[id]=variant;return variant;
+}
+export async function loadKit(only=null) {
+  baseKitPromise ||= new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync('./models/xbot.glb').then(gltf=>{const kit=prepareKit(gltf);kit.variants={};return kit;});
+  const kit=await baseKitPromise;
+  await Promise.all((only??Object.keys(HUMAN_FILES)).map(id=>loadHumanVariant(kit,id)));
+  return kit;
+}
+
+// SkeletonUtils clones a Skeleton for every SkinnedMesh. Mesh pieces which
+// originally shared a glTF skin must share their cloned skeleton as well.
+function cloneCharacter(scene){
+  const model=SkeletonUtils.clone(scene),skins=new Map();
+  model.traverse(o=>{if(!o.isSkinnedMesh)return;const group=o.userData.avatarSkinGroup;
+    if(group===undefined)return;
+    if(skins.has(group))o.skeleton=skins.get(group);else skins.set(group,o.skeleton);
+  });return model;
 }
 function suspectKit(kit, suspect) { return kit.variants?.[suspect.id] || kit; }
 
@@ -98,17 +98,18 @@ function bendBone(root, bone, angle) {
 }
 
 export class Avatar {
-  constructor(kit, suspect) {
-    kit = suspectKit(kit, suspect);
+  constructor(kit, suspect, {humanForm=true}={}) {
+    document.body.dataset.avatarInstances=String(Number(document.body.dataset.avatarInstances||0)+1);
+    kit = humanForm ? suspectKit(kit, suspect) : kit;
+    this.humanForm=humanForm&&!!kit.authored;
     this.id = suspect.id;
     this.color = suspect.color;
     this.root = new THREE.Group();
-    this.model = SkeletonUtils.clone(kit.scene);
+    this.model = cloneCharacter(kit.scene);
     this.model.scale.setScalar(0.98);
     this.root.add(this.model);
     this.bones = {};
     this.model.traverse((o) => { if (o.isBone) this.bones[o.name.replace("mixamorig", "").replace(":", "")] = o; });
-    if(!kit.authored)addFallbackHair(this.model,this.bones,suspect.id);
     this.mats = dress(this.model, suspect.color);
     this.mixer = new THREE.AnimationMixer(this.model);
     this.acts = {};
@@ -125,8 +126,10 @@ export class Avatar {
       a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = false;
       this.acts[n] = a;
     }
-    this.hairMotion = new HairMotion(this.model, this.bones);
-    this.haircuts = new Haircuts(this.model,this.hairMotion);
+    this.hairMotion = kit.authored ? new HairMotion(this.model, this.bones) : null;
+    if(kit.authored)installHairAppearance(this.model);
+    this.haircuts = kit.authored ? new Haircuts(this.model,this.hairMotion) : null;
+    this.lips = kit.authored ? new LipMotion(this.model,this.id) : null;
     this.blink = kit.authored ? new BlinkMotion(this.model) : null;
     this.speed = 0;
     this.ghost = false;
@@ -134,6 +137,14 @@ export class Avatar {
     this.pitch = 0;
     this.lastGesture = null;
     this.t = Math.random() * 10;
+  }
+  dispose(){
+    this.mixer.stopAllAction();this.mixer.uncacheRoot(this.model);
+    this.haircuts?.texture.dispose();
+    for(const clip of this.haircuts?.clippings||[]){clip.line.geometry.dispose();clip.line.material.dispose();}
+    this.model.traverse(o=>{if(o.isMesh){for(const m of Array.isArray(o.material)?o.material:[o.material])m.dispose();for(const m of o.userData.originalMaterials||[])m.dispose();}});
+    const skeletons=new Set();this.model.traverse(o=>{if(o.isSkinnedMesh)skeletons.add(o.skeleton);});for(const skeleton of skeletons)skeleton.dispose();
+    this.root.removeFromParent();
   }
   gesture(name) {
     const a = this.acts[name];
@@ -145,6 +156,7 @@ export class Avatar {
     this.ghost = on;
     this.mats = dress(this.model, this.color, on);
     this.hairMotion?.refreshMaterials();
+    if(!on&&this.humanForm)installHairAppearance(this.model);
     this.haircuts?.refresh();
   }
   // Hide/show the head (first-person viewers would see inside it).
@@ -155,7 +167,7 @@ export class Avatar {
     h.updateMatrixWorld(true);
     // Mirror captures render between two first-person passes. Upload the new
     // bone pose now so the reflection includes the head in that same frame.
-    this.model.traverse((o) => { if (o.isSkinnedMesh) o.skeleton.update(); });
+    const seen=new Set();this.model.traverse((o) => { if (o.isSkinnedMesh&&!seen.has(o.skeleton)){seen.add(o.skeleton);o.skeleton.update();} });
   }
   headWorld(out = new THREE.Vector3()) { const h = this.bones.Head; if (h) h.getWorldPosition(out); else out.copy(this.root.position).setY(1.6); return out; }
 
@@ -251,6 +263,7 @@ export class Avatar {
     this.lastGesture = anim || null;
     this.mixer.update(dt);
     this.blink?.update(dt, { alive, ko, conversing });
+    this.lips?.update(dt,alive&&!ko);
     // Ghosts float; seated people fold their legs onto the seat.
     let y = 0, back = 0;
     if (this.ghost) y = 0.12 + Math.sin(this.t * 1.7) * 0.07;
@@ -289,19 +302,19 @@ export class Avatar {
 
 // A body, posed on the floor where the murder happened.
 export class Corpse {
-  constructor(kit, suspect) {
-    kit = suspectKit(kit, suspect);
+  constructor(kit, suspect, {humanForm=true}={}) {
+    kit = humanForm ? suspectKit(kit, suspect) : kit;
     this.root = new THREE.Group();
-    this.model = SkeletonUtils.clone(kit.scene);
+    this.model = cloneCharacter(kit.scene);
     this.model.scale.setScalar(0.98);
     const mixer = new THREE.AnimationMixer(this.model);
     const a = mixer.clipAction(kit.clips.idle); a.play(); mixer.update(0.1);
     const bones = {};
     this.model.traverse((o) => { if (o.isBone) bones[o.name.replace("mixamorig", "").replace(":", "")] = o; });
-    if(!kit.authored)addFallbackHair(this.model,bones,suspect.id);
     dress(this.model,suspect.color);
-    this.hairMotion=new HairMotion(this.model,bones);
-    this.haircuts=new Haircuts(this.model,this.hairMotion);
+    this.hairMotion=kit.authored?new HairMotion(this.model,bones):null;
+    if(kit.authored)installHairAppearance(this.model);
+    this.haircuts=kit.authored?new Haircuts(this.model,this.hairMotion):null;
     this.model.updateMatrixWorld(true);
     // Sprawled: one knee bent, arms out.
     bendBone(this.model, bones.LeftUpLeg, -0.5); bendBone(this.model, bones.LeftLeg, 0.9);
