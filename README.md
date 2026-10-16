@@ -63,3 +63,128 @@ There is no package installation or build step. The project is served directly f
 The earlier rebrand changed the title, subtitle, cast names, gender mix, and AI character writing. It added Copper and Teal guests and expanded Help into an illustrated game manual. Those character changes did not add a new mechanic.
 
 The room layout was revised after the rebrand. The bathroom occupies the former conservatory corner; the art room, conference room, game room, and office replace their earlier uses. The library extends south, and the center conference room has an added east entrance. Keep new story writing original and avoid fixed backstory claims that contradict a randomized round.
+
+
+## Human cast, avatar policy and appearance
+
+All eight soul-defined guests now have human variants. Mara, Ivo, Nessa and Basil
+join Tomas, Leonie, Elian and Sera. Their faces use different skull, cheek, jaw,
+nose, lip and eye-spacing profiles. The female jaw and neck transition restores
+contiguous anatomical geometry in place of the earlier hard selection boundary;
+normals are regenerated across UV seams. Lapels and carried occupational details
+fit the clothing and follow local torso weights. Nessa has a contoured utility
+belt. Each guest has distinct footwear with shaped soles and rounded toe/heel
+profiles: oxfords, Mary Janes, derbies, field boots, loafers, brogues, work boots
+and rain boots. The old block shoe bottoms are removed.
+
+Avatar mode defaults to **Robot and Human Avatars**: human-controlled seats use
+human meshes; AI seats use the original hairless solid-color robots. **No Human
+Avatars** makes every guest a robot and disables haircut assignments. **Only Human
+Avatars** makes all eight guests human-shaped, including AI-controlled seats.
+This does not remove AI slots. The online host changes it below Killer settings;
+local play places it below Back. Help portraits render the actual authored
+human variants. Ctrl + backtick opens the eight-character preview menu with
+Inspect face, Inspect shoes, movement and groom controls.
+
+## Hair and barber chair
+
+All human grooms contain cuttable fibers with stable IDs, metric lengths,
+movement-relative wind, flexible guide physics and body/arm collision. Robot
+forms never instantiate hair. Localized cuts persist in match snapshots and
+shorten the active guides. See `models/HAIRCUTS.md` for protocol and limitations.
+
+Cut Hair requires the Kitchen Knife. Share the task to roll for permission;
+a human target must explicitly Accept. Both guests route to the bathroom barber
+chair, where manual strokes must remove 15% of the original groom's total length.
+Sneak cutting is a stealth d20 opposed by the target's observation/attention,
+with a penalty if seen. Dead humans and robots are ineligible. Assignments need
+two living human-form guests with hair remaining and are waived without penalty
+if no valid target survives. A consenting chair session gives a killer a private
+betrayal option, governed by the existing kill-day and one-kill rules. The host
+validates consent/session, actual knife, forms, reach, line of sight and cuts.
+
+## Spoken faces
+
+Each human head has 15 retargeted CC0 viseme morphs. `audio.js` plays returned TTS
+audio URLs and uses the actual audio clock and envelope; `lip-motion.js` blends
+mouth shapes with fast attacks, smooth releases and coarticulation. Silence and
+private narration close the mouth. Spoken player choices and AI replies share
+a queue so a reply does not interrupt the player's line. Timing within the line
+is inferred from text because the API supplies no phoneme timestamps. It is an
+approximation, not forced alignment. Speak sample is available in the preview.
+See `models/CAST-CREDITS.md` for the viseme license and character asset credits.
+
+## Room and lamp lighting
+
+Every room and the hallway have a visible wall switch near an entrance, operated
+with the usual interact key. Ceiling fixtures, floor lamps and the portable desk
+lamp are separately controlled. Lamps emit actual local light; bulbs and shades
+dim when switched off. Room-local light selection, a soft shadow key and low
+indoor ambient light avoid bright spill from unrelated rooms. Fires and torches
+still provide local illumination. The existing flicker/blackout overrides the
+fixtures during the murder phase.
+
+The host snapshots `lightsOff`. Shared illumination estimates reduce sight range
+and clarity for observations, events and evidence; nearby movement remains
+noticeable, hearing is unchanged. The player's visibility grid and interaction
+prompts also respond to darkness. Lighting estimates use distance and room/line
+of-sight checks, not a GPU pixel readback or a physically exact light meter.
+
+
+### Device speech compatibility
+
+When Websim returns an empty audio URL or its speech service fails, the player
+uses the device's speech engine. Real start/end and word boundary events anchor
+the mouth shapes. Voices without word boundary events continue using estimated
+letter timing through the whole utterance. That timing is approximate and there is no
+measured audio envelope for device speech. If device speech is also unavailable,
+the mouth remains neutral and the studio reports that speech is unavailable.
+Audio URL playback uses the audio clock and measured envelope as described above.
+
+
+## Dropped-object gravity and contact
+
+Released hand and pocket items wake immediately, clear carrying/container state,
+and fall under 9.8 m/s² gravity. Sleeping props are checked for floor/furniture
+support and wake if that support disappears. Snapshot recovery preserves velocity
+and sleep state; older snapshots wake loose objects instead of freezing airborne
+props. Objects embedded inside furniture resolve through the nearest face,
+rather than being lifted onto the furniture's top. Loose-object chair colliders
+use seat, back, arm and leg pieces instead of an invisible full-height block.
+Visible prop meshes align their lowest solid point with the collision contact
+plane when at rest; halo sprites do not affect that alignment. Physics remains
+a sphere approximation for loose props, not a full convex rigid-body solver.
+
+
+## Character repair pass and title showcase
+
+The title background runs its autonomous match in **Only Human Avatars** mode.
+When showing a live lobby, its display snapshot also renders all guest seats as
+humans. This presentation override does not change the watched match or the
+local/online avatar setting; the butler retains its robot design.
+
+Seven anatomical heads have a further continuous portrait sculpt across the
+jaw, cheek, chin, nose and mouth, preserving the repaired neck joins and fitted
+eye rigs. Tomas retains his separately sourced scanned head. Hair palettes are
+chestnut (Tomas), auburn (Leonie), silver (Elian), warm brown (Sera), espresso
+(Mara), sandy gold (Ivo), cool black (Nessa), and ash brown (Basil). These are art
+direction choices informed by occupation/personality, not physical descriptions
+claimed to be present in the soul files.
+
+Basil's shoulder tabs now drape onto the jacket and inherit local shoulder
+weights. His barometer and Ivo's watch are fitted as complete rigid assemblies,
+so their indices stay attached to their cases. Recorder, folio, notebook and
+pouch mounts also use local jacket weights and surface alignment.
+
+Cutting now retains the surviving guide's deformed position and momentum and
+interpolates its new endpoint, instead of resetting the entire lock on each
+stroke. Removed guides stop simulating; stubble follows the scalp. Collision
+and lock separation move the particle history with positional corrections to
+avoid adding artificial velocity. This is a guide-based game simulation, not
+individual physical simulation of every visible fiber.
+
+The character studio includes explicit AH/EE/OO/closed-lip pose inspection plus
+actual speech samples. Device utterances stay strongly referenced until their
+completion; audio-URL mouth amplitude adapts to quieter voices. Speech remains
+an approximate text-viseme system gated by actual playback, not exact phoneme
+alignment.
