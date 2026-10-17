@@ -1,7 +1,7 @@
 // HUD and overlays. One PlayerHud per local player (placed in that player's
 // half of the screen), plus shared cutscene and accusation-table overlays.
 import { SUSPECTS, SUSPECT_BY_ID, WEAPONS, WEAPON_BY_ID, ROOM_LIST, DAY_SECONDS, CHECKLIST, LAST_DAY, roomName, weaponName, personName, itemName } from "./data.js";
-import { voice, voiceChoices, innerVoice, taskThoughts, inspectionThought, witnessThought, itemThought } from "./talk.js";
+import { voice, voiceChoices, innerVoice, taskThoughts, inspectionThought, witnessThought, itemThought, pocketThought } from "./talk.js";
 import { rollDice } from "./dice3d.js";
 import { speak, narrate, stopSpeak, sfx } from "./audio.js";
 import { TASK_BY_ID, TOOL_NAME } from './tasks.js';
@@ -15,6 +15,7 @@ export const chip = (id) => `<span class="pchip" style="--c:${SUSPECT_BY_ID[id]?
 export const portrait = (id, cls = "") => `<div class="portrait ${cls}" style="--c:${SUSPECT_BY_ID[id].color}"><div class="sil"></div><span>${esc(SUSPECT_BY_ID[id].short)}</span></div>`;
 const WEAPON_ICON = { flashlight: "🔦", knife: "🔪", broken_pipe: "╱", pistol: "🔫", hammer: "🔨", kitchen_knife: "🔪", rope: "➰", two_handed_sword: "⚔" };
 const VISUAL_FACTS = new Set(["saw", "ran", "held", "body", "kill", "wound", "blood", "bleach", "cleaning", "caught", "binned", "knocked", "missing", "watched", "burned", "threw", "dragged", "ghost", "talked", "inbin", "peekCaught"]);
+const pocketSpeechJobs=new Map();
 const INNER_THOUGHT_GAP = 42000;
 const IMPORTANT_THOUGHT_GAP = 18000;
 
@@ -124,7 +125,7 @@ export class PlayerHud {
       case "role": this.role = m.killer ? "killer" : "savior"; this.partner = m.partner || null; this.duo = !!m.duo; this.lastDay = m.lastDay || LAST_DAY; this.renderRole(); this.showRoleCard(); break;
       case 'team': this.teamWith = m.on ? m.with : null; this.renderTeam(); break;
       case 'task': this.task = m.task; this.workProgress = m.task?.progress || {}; this.renderTask(); if (m.task?.id === 'pool' && m.task.complete) this.poolPanel.finishReflection(); break;
-      case "fact": this.facts.set(m.fact.key, m.fact); this.updateNoteCount(); this.onFact(m.fact, m.privateContext); if (this.bookOpen) this.renderBook(); break;
+      case "fact": this.facts.set(m.fact.key, m.fact); this.updateNoteCount(); if(!m.fact.pocketCheck)this.onFact(m.fact, m.privateContext); if (this.bookOpen) this.renderBook(); break;
       case "cards": {
         const known = new Set(this.cards.map((c) => `${c.type}:${c.id}`));
         this.cards = m.cards; this.renderCards();
@@ -135,6 +136,9 @@ export class PlayerHud {
       case "wound": this.bleeding = !!m.bleeding; this.renderInv(); break;
       case "attackLock": this.lockedTarget = m.target || null; break;
       case "drag": this.dragLeft = m.left; this.renderInv(); break;
+      case 'pocketSpeech':this.playPocketSpeech(m);break;
+      case 'pocketAmbientSpeech':this.playPocketSpeech(m,true);break;
+      case 'pocketResult':this.showPocketResult(m);break;
       case "dice": this.showDice(m); break;
       case "dialogueDice": rollDice(this.el, { roll: m.roll, bonus: m.bonus, dc: m.dc, success: m.success, head: m.tag === "Pass on" ? `You pass word to ${chip(m.target)}` : `You ${esc(m.tag.toLowerCase())} with ${chip(m.target)}`, result: m.result }); break;
       case "peekResult": this.peekForced = !m.success && !!m.killRequired; this.showPeekResult(m); this.renderDecide(); break;
@@ -228,6 +232,29 @@ export class PlayerHud {
     if (el.dataset.h === html) return;
     el.dataset.h = html; el.innerHTML = html;
     el.querySelectorAll("button.islot").forEach((b) => b.onclick = (e) => { e.stopPropagation(); this.send({ type: "dropItem", id: b.dataset.id }); });
+  }
+  async playPocketSpeech(m,ambient=false){
+    if(!ambient)await this.openConvo({...m,options:[]});
+    if(!ambient&&this.convo?.id!==m.id)return;
+    if(!ambient){this.$('.d-name').innerHTML=chip(m.speaker);this.$('.d-line').textContent=m.line;this.replyShotUntil=m.speaker===this.char?performance.now()+65000:0;}
+    let job=pocketSpeechJobs.get(m.token);
+    if(!job){
+      job=speak(m.line,SUSPECT_BY_ID[m.speaker]?.voice,m.speaker).then(async played=>{
+        if(!played){this.toast('Speech unavailable — the displayed line will finish before the pocket check.');await new Promise(resolve=>setTimeout(resolve,Math.min(8000,Math.max(1500,m.line.split(/\s+/).length*400))));}
+      });pocketSpeechJobs.set(m.token,job);job.finally(()=>setTimeout(()=>pocketSpeechJobs.delete(m.token),3000));
+    }
+    await job;if(ambient||this.convo?.id===m.id)this.send({type:'pocketSpeechDone',convo:m.id,token:m.token});
+  }
+  showPocketResult(m){
+    const requester=m.by===this.char,who=SUSPECT_BY_ID[requester?m.target:m.by]?.short;
+    if(!m.consent){
+      const own=requester?m.request:m.defense,opponent=requester?m.defense:m.request;
+      rollDice(this.el,{...own,dc:opponent.total,opponent,success:requester?m.success:!m.success,head:`Pockets · you vs ${esc(who)}`,result:m.success?(requester?'You caught an unnoticed glimpse.':'The question passes without raising your suspicion.'):(requester?'You learn nothing about their pockets.':'You keep your pockets private and become wary of the request.')});
+    }else this.toast(requester?'Permission granted — no roll needed.':'You freely allow the pocket check.');
+    // A failed requester gets no invented observation or private item thought.
+    if(requester&&!m.success)return;
+    const delay=m.consent?0:1650;
+    setTimeout(async()=>{const line=await pocketThought({meId:this.char,...m,requester});if(this.alive&&this.day===m.day)this.thought(line,{reserved:true});},delay);
   }
   showDice(m) {
     const me = m.by === this.char;
@@ -456,7 +483,7 @@ export class PlayerHud {
     } else if (options?.length) {
       lineEl.textContent = line || `You approach ${partner.short}.`;
       lineEl.classList.add("thinking");
-      options = await voiceChoices({ ...m, role: this.role }, this.char);
+      options = m.pocketResponse?m.options:await voiceChoices({ ...m, role: this.role }, this.char);
       if (this.convo?.id !== m.id || this.convoRenderSeq !== renderSeq) return;
       if (!m.speaker && options.opening) {
         line = options.opening;
@@ -473,6 +500,7 @@ export class PlayerHud {
         if (!this.convo || this.convo.id !== m.id) return;
         this.stopConvoTimer();
         stopSpeak();
+        if(o.kind==='Search'||m.pocketResponse){this.send({type:'choose',convo:m.id,i:o.i??i,text:o.text});nameEl.innerHTML=chip(this.char);lineEl.textContent=o.text;opts.innerHTML='';this.focus.set([]);return;}
         const playerSpeech=speak(o.text, SUSPECT_BY_ID[this.char]?.voice, this.char);
         playerSpeech.finally(()=>{if(this.convo?.id===m.id)this.replyShotUntil=performance.now()+250;});
         this.send({ type: "choose", convo: m.id, i: o.i ?? i, text: o.text });
