@@ -118,21 +118,23 @@ export class View {
 
   adaptResolution(dt) {
     if (!this.graphics.adaptive || document.hidden || dt <= 0) return;
-    this.scaleTime += dt;
-    this.scaleFrames++;
-    if (this.scaleTime < 2) return;
-    const average = this.scaleTime / this.scaleFrames;
-    const floor = Math.min(this.q.ratio, Math.max(0.65, this.q.ratio * 0.62));
-    const next = average > 1 / 43 ? Math.max(floor, this.pixelRatio - (average>1/20?.2:.1))
-      : average < 1 / 57 ? Math.min(this.q.ratio, this.pixelRatio + 0.05) : this.pixelRatio;
-    if (Math.abs(next - this.pixelRatio) > 0.01) {
-      this.pixelRatio = next;
-      this.renderer.setPixelRatio(next);
-    }
-    this.scaleTime = this.scaleFrames = 0;
+    // Resizing the default framebuffer can itself stall the driver. Require a
+    // sustained signal and change in one larger step, with a cooldown.
+    this.scaleTime += dt;this.scaleFrames++;
+    if(this.scaleTime<3)return;
+    const average=this.scaleTime/this.scaleFrames;
+    this.scaleTime=this.scaleFrames=0;
+    const now=performance.now();if(now-(this.lastResolutionChange||0)<12000)return;
+    const floor=Math.min(this.q.ratio,Math.max(.65,this.q.ratio*.62));
+    let next=this.pixelRatio;
+    if(average>1/38)next=Math.max(floor,this.pixelRatio*Math.sqrt((1/50)/average));
+    else if(average<1/59)next=Math.min(this.q.ratio,this.pixelRatio+.1);
+    if(Math.abs(next-this.pixelRatio)>.08){this.pixelRatio=next;this.renderer.setPixelRatio(next);this.lastResolutionChange=now;}
+
   }
 
-  async init() {
+  async init(progress=()=>{}) {
+    progress("Building the mansion…",4);
     const m = buildMansion(this.q);
     this.mansion = m;
     // Keep a fixed light count. Showing/hiding source lamps changed the shader
@@ -161,6 +163,19 @@ export class View {
     this.taskObjects = buildTaskObjects(); this.scene.add(this.taskObjects.root);
     this.ashPiles = new AshPiles(this.scene);
     this.land = buildLandscape(this.scene, { moonDir: m.moon.position.clone() });
+    // Present the map before fetching or constructing any character.
+    progress('Opening the mansion…',12);
+    for(const light of m.lights)light.visible=false;
+    this.roomLightSlots.forEach((slot,i)=>{const source=m.lights[i];if(source){slot.position.copy(source.position);slot.color.copy(source.color);slot.intensity=source.intensity;slot.distance=source.distance;}});
+    const overview=new THREE.PerspectiveCamera(52,innerWidth/innerHeight,.1,500);overview.position.set(36,52,46);overview.lookAt(0,0,0);
+    const roofVisible=m.roof.visible;m.roof.visible=true;const oldHemi=m.hemi.intensity,oldMoon=m.moon.intensity;m.hemi.intensity=.8;m.moon.intensity=2.8;for(const ceiling of m.ceilings)ceiling.visible=false;
+    const mirrorStates=m.mirrors.map(mirror=>[mirror,mirror.visible]);for(const [mirror]of mirrorStates)mirror.visible=false;
+    this.renderer.clear();this.renderer.render(this.scene,overview);
+    const backdrop=document.querySelector('#bootScene');if(backdrop){backdrop.width=this.renderer.domElement.width;backdrop.height=this.renderer.domElement.height;backdrop.getContext('2d').drawImage(this.renderer.domElement,0,0);}
+    m.roof.visible=roofVisible;m.hemi.intensity=oldHemi;m.moon.intensity=oldMoon;for(const ceiling of m.ceilings)ceiling.visible=true;for(const [mirror,show]of mirrorStates)mirror.visible=show;
+    document.body.dataset.mapReadiness='ready';
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    progress('Preparing the cast…',18);
     this.kit = await loadKit([]);
     this.humanLoads=new Set();this.humanLoadQueue=Promise.resolve();this.avatarPool=new Map();
     for (const s of SUSPECTS) {
@@ -256,25 +271,41 @@ export class View {
     const pause=()=>new Promise(resolve=>{const channel=new MessageChannel();channel.port1.onmessage=()=>{channel.port1.close();channel.port2.close();resolve();};channel.port2.postMessage(null);}),ids=[...SUSPECTS.map(s=>s.id),'butler'],started=performance.now();
     document.body.dataset.assetReadiness='loading';
     for(let i=0;i<ids.length;i++){
-      const id=ids[i];progress(`Loading ${id==='butler'?BUTLER.name:SUSPECT_BY_ID[id].name} · ${i+1}/${ids.length}`);
+      const id=ids[i];progress(`Loading ${id==='butler'?BUTLER.name:SUSPECT_BY_ID[id].name} · ${i+1}/${ids.length}`,20+45*i/ids.length);
       const variant=await loadHumanVariant(this.kit,id);if(!variant)throw new Error('Could not prepare '+id);
       this.preparedAvatar(id,true);await pause();
     }
     this.applyGraphics(this.graphics);
-    progress('Preparing textures…');
+    progress('Preparing textures…',66);
     const textures=new Set();this.scene.traverse(o=>{for(const m of Array.isArray(o.material)?o.material:o.material?[o.material]:[])for(const value of Object.values(m))if(value?.isTexture)textures.add(value);});
     for(const texture of textures){this.renderer.initTexture(texture);await pause();}
     // The same twelve local point lights and indoor shadow layout used in play.
     for(const light of this.mansion.lights)light.visible=false;this.mansion.moon.castShadow=false;
     const camera=new THREE.PerspectiveCamera(70,1,.06,500);camera.position.set(0,1.6,4);camera.lookAt(0,1.0,0);camera.updateMatrixWorld();
-    progress('Preparing house lighting…');await this.renderer.compileAsync(this.scene,camera);await pause();
+    progress('Preparing house lighting…',78);await this.renderer.compileAsync(this.scene,camera);await pause();
     const wasTarget=this.renderer.getRenderTarget(),wasScissor=this.renderer.getScissorTest(),wasViewport=this.renderer.getViewport(new THREE.Vector4()),wasCanvasVisibility=this.renderer.domElement.style.visibility;this.renderer.domElement.style.visibility='hidden';
     const visible=[];for(const pool of this.avatarPool.values())for(const avatar of Object.values(pool)){visible.push([avatar,avatar.root.visible]);avatar.root.visible=true;avatar.update(0,{x:0,z:0,yaw:0,mv:0,alive:true},true);}
     const mirrors=this.mansion.mirrors.map(m=>[m,m.visible]);for(const [mirror]of mirrors)mirror.visible=false;
     try{
       this.renderer.setScissorTest(false);this.renderer.setRenderTarget(null);this.renderer.setViewport(0,0,48,48);
-      for(let i=0;i<4;i++){progress(`Preparing first views · ${i+1}/4`);const angle=i*Math.PI/2;camera.position.set(Math.sin(angle)*4,1.6,Math.cos(angle)*4);camera.lookAt(0,1,0);this.renderer.clear();this.renderer.render(this.scene,camera);await pause();}
+      for(let i=0;i<4;i++){progress(`Preparing character views · ${i+1}/4`,82+i);for(const [avatar]of visible)avatar.update(1/30,{x:0,z:0,yaw:0,mv:0,alive:true});const angle=i*Math.PI/2;camera.position.set(Math.sin(angle)*4,1.6,Math.cos(angle)*4);camera.lookAt(0,1,0);this.renderer.clear();this.renderer.render(this.scene,camera);await pause();}
+      // compileAsync does not upload off-camera vertex buffers. Draw the whole
+      // house from above/below, then each room and mirror before unlocking Play.
+      const sweep=new THREE.OrthographicCamera(-W/2-8,W/2+8,D/2+8,-D/2-8,.1,240);
+      const views=[[0,75,0,0,0,0],[0,-25,0,0,0,0]];
+      for(const [x,y,z,tx,ty,tz]of views){sweep.position.set(x,y,z);sweep.lookAt(tx,ty,tz);sweep.updateMatrixWorld();this.renderer.clear();this.renderer.render(this.scene,sweep);await pause();}
+      for(const ceiling of this.mansion.ceilings)ceiling.visible=false;
+      this.mansion.roof.visible=false;
+      for(const [mirror,show]of mirrors)mirror.visible=show;
+      for(let i=0;i<this.mansion.lights.length;i++){
+        const light=this.mansion.lights[i];if(light.userData.control!=='room:'+light.userData.room)continue;
+        progress('Preparing mansion views…',87+10*i/this.mansion.lights.length);
+        camera.position.set(light.position.x,1.6,light.position.z+.4);camera.lookAt(light.position.x,1.4,light.position.z-2);camera.updateMatrixWorld();
+        this.mansion.key.intensity=1;this.renderer.clear();this.renderer.render(this.scene,camera);await pause();
+      }
+      for(const ceiling of this.mansion.ceilings)ceiling.visible=true;
     }finally{
+      this.mansion.key.intensity=0;
       for(const [avatar,show]of visible){avatar.root.visible=show;if(avatar!==this.avatars.get(avatar.id)&&avatar!==this.butlerAv)avatar.root.removeFromParent();}for(const [mirror,show]of mirrors)mirror.visible=show;this.renderer.setRenderTarget(wasTarget);this.renderer.setScissorTest(wasScissor);this.renderer.setViewport(wasViewport);this.renderer.domElement.style.visibility=wasCanvasVisibility;
     }
     document.body.dataset.preparedPrograms=String(this.renderer.info.programs.length);document.body.dataset.preparedGeometries=String(this.renderer.info.memory.geometries);document.body.dataset.preparedTextures=String(this.renderer.info.memory.textures);
@@ -289,6 +320,7 @@ export class View {
   }
   // Apply a snapshot (match.snapshot() shape).
   apply(snap, dt, snapAll = false) {
+    const applyStart=performance.now();
     this.snap = snap;
     this.time += dt;
     this.taskObjects?.update(snap.taskScene, snap.painting);
@@ -343,6 +375,7 @@ export class View {
       if (bt) { this.butlerAv.haircuts?.apply(snap.haircuts?.butler); this.butlerAv.update(dt, { x: bt[0], z: bt[1], yaw: bt[2], mv: bt[3], alive: true, anim: bt[6], seat: false,wind:[.14,0,.06] }, snapAll || !this.butlerSeen); this.butlerTools(bt[4]); }
       this.butlerSeen = !!bt;
     }
+    this.profileActorsMs=performance.now()-applyStart;const propsStart=performance.now();
     // Props: rows only include moving/held ones except periodic full lists.
     this.carried = new Set(snap.chars.flatMap((r) => [r[10], r[13]]).filter(Boolean));
     if (snap.ashes) this.ashPiles.update(snap.ashes);
@@ -397,6 +430,7 @@ export class View {
       }
     }
     this.updateTorches(dt);
+    this.profilePropsMs=performance.now()-propsStart;const worldStart=performance.now();
     // Doors.
     const m = this.mansion;
     if (snap.doors) m.doors.forEach((d, i) => {
@@ -452,6 +486,7 @@ export class View {
     this.blood.applyMarks(snap.marks);
     if (snap.stains) this.bloodSeen = true;
     this.animateWorld(dt);
+    this.profileWorldMs=performance.now()-worldStart;this.profileApplyMs=performance.now()-applyStart;
   }
 
   updateTorches(dt) {
@@ -613,7 +648,7 @@ export class View {
     for (const l of m.lights) {
       const u = l.userData;
       let k = 1;
-      if (this.flicker) { const n = Math.sin(t * 23 + u.phase) * Math.sin(t * 7.7 + u.phase * 2) + Math.sin(t * 41 + u.phase * 3) * 0.4; k = n > 0.55 ? 0.05 : 0.45 + n * 0.3; }
+      if (this.flicker) { const n = Math.sin(t * 23 + u.phase) * Math.sin(t * 7.7 + u.phase * 2) + Math.sin(t * 41 + u.phase * 3) * 0.4; k = (n > 0.55 ? 0.05 : 0.45 + n * 0.3)*(u.room==='hallway'?5/22:1); }
       if (this.blackout > 0) k = this.blackout > 0.9 ? 0 : 0.2 * (1 - this.blackout / 0.9) + 0.1;
       if(!fixtureOn(this.snap?.lightsOff,u.control)||u.hidden)k=0;
       l.intensity = u.base * k;
@@ -647,6 +682,7 @@ export class View {
 
   // ---------- render ----------
   render(dt) {
+    this.profilePrepareMs=0;this.profileDrawMs=0;
     const r = this.renderer;
     if (r.xr.isPresenting) { this.renderXR(dt); return; }
     this.animateKillStage();
@@ -660,11 +696,13 @@ export class View {
       const rect = rects[i] || rects[0];
       this.updateCamera(v, dt, rect);
       if (this.taskObjects) { this.taskObjects.local = v.taskWork; this.taskObjects.update(this.snap?.taskScene, this.snap?.painting); }
+      const prepareStart=performance.now();
       this.prepareView(v);
+      this.profilePrepareMs+=performance.now()-prepareStart;
       this.mirrorViewer = v;
       r.setViewport(rect.x, rect.y, rect.w, rect.h);
       r.setScissor(rect.x, rect.y, rect.w, rect.h);
-      r.render(this.scene, v.cam);
+      const drawStart=performance.now();r.render(this.scene, v.cam);this.profileDrawMs+=performance.now()-drawStart;
       this.mirrorViewer = null;
       this.afterView(v);
       Object.assign(v.layer.style, { left: `${rect.x}px`, top: `${innerHeight - rect.y - rect.h}px`, width: `${rect.w}px`, height: `${rect.h}px` });
@@ -705,14 +743,20 @@ export class View {
     const selected=lamps?[...lamps]:[...m.lights].sort((a,b)=>a.position.distanceToSquared(lightOrigin)-b.position.distanceToSquared(lightOrigin)).slice(0,8);
     for(const lamp of m.lights)lamp.visible=false;
     this.roomLightSlots.forEach((slot,i)=>{const source=selected[i];slot.intensity=source?.intensity||0;if(source){slot.position.copy(source.position);slot.color.copy(source.color);slot.distance=source.distance;slot.decay=source.decay;}});
+    const lightState=snapshotLighting(this.snap,this.props);
+    // A closed room cannot contribute visible furniture through its solid
+    // walls. Keep every open-door room conservatively, including reflections.
+    const visibleRooms=new Set(['hallway',roomAtWorld(lightOrigin.x,lightOrigin.z)]);
+    DOOR_LIST.forEach((door,i)=>{if((this.snap?.doors?.[i]||0)>.02)visibleRooms.add(door.room);});
+    v.hiddenFurniture=[];
+    if(indoor&&!xr)for(const {holder,room}of m.roomFurniture){if(holder.visible&&!visibleRooms.has(room)){holder.visible=false;v.hiddenFurniture.push(holder);}}
     const useFow = indoor && living && me;
     let vis = null;
     if (useFow) {
       const a = this.avatars.get(v.follow).root.position;
-      const lightState=snapshotLighting(this.snap,this.props);
       vis = computeVis(v.fow, a.x, a.z, this.snap?.doors || DOOR_LIST.map(() => 0),false,(x,z)=>illuminationAt(x,z,lightState),JSON.stringify(this.snap?.lightsOff||{})+Math.floor(this.time*3));
     }
-    uploadVis(vis);
+    uploadVis(vis,v.fow.key);
     FOW_UNIFORMS.fowOn.value = vis ? 1 : 0;
     v.vis = vis;
     // Cull complete upright bodies in world metres. Per-mesh bind-space
@@ -776,7 +820,7 @@ export class View {
       v.keySrc = src;
     } else k.intensity = 0;
     v.indoorAmbient=indoor&&living;
-    if(v.indoorAmbient){v.originalMoon=m.moon.intensity;v.originalHemi=m.hemi.intensity;const ambientLight=me?illuminationAt(me.x,me.z,snapshotLighting(this.snap,this.props)):1;m.moon.intensity=.012+.06*ambientLight;m.hemi.intensity=.035+.16*ambientLight;}
+    if(v.indoorAmbient){v.originalMoon=m.moon.intensity;v.originalHemi=m.hemi.intensity;const ambientLight=(me?illuminationAt(me.x,me.z,lightState):1)*(this.blackout>0?.04:this.flicker?.3:1);m.moon.intensity=.012+.06*ambientLight;m.hemi.intensity=.035+(me&&roomAtWorld(me.x,me.z)==='hallway'&&!this.flicker&&this.blackout<=0?.30:.16)*ambientLight;}
     // Underground: no moonlight, no sky — only the torches.
     const eye = me ? this.avatars.get(v.follow).root.position : null;
     v.under = !!(eye && underground(eye.z) && (v.mode !== "title" || !v.titleOrbit) && v.mode !== "table" && v.mode !== "overview");
@@ -789,6 +833,7 @@ export class View {
     else if (xr) { setUnderground(v.under); setExteriorRain(false); }
   }
   afterView(v) {
+    for(const holder of v.hiddenFurniture||[])holder.visible=true;v.hiddenFurniture=null;
     if (v.under) { this.mansion.moon.intensity = v.saveMoon; this.mansion.hemi.intensity = v.saveHemi; v.under = false; }
     if(v.indoorAmbient){this.mansion.moon.intensity=v.originalMoon;this.mansion.hemi.intensity=v.originalHemi;v.indoorAmbient=false;}
     if (v.cutSil) { this.silhouette(v.cutSil, false); v.cutSil = null; }
