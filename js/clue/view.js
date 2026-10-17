@@ -10,9 +10,9 @@ import { buildMansion } from "./mansion3d.js";
 import { buildDungeon, buildTrapdoors } from "./dungeon3d.js";
 import { buildLandscape } from "./landscape.js";
 import { propMesh, tintItem, seatPropMesh } from "./props3d.js";
-import { Blood } from "./blood3d.js";
+import { Blood, prepareBloodAssets } from "./blood3d.js";
 import { loadKit, loadHumanVariant, Avatar, Corpse, chalkOutline } from "./avatars.js";
-import { computeVis, uploadVis, visAt, patchTree, FOW_UNIFORMS } from "./fow.js";
+import { computeVis, uploadVis, visAt, patchTree, prepareHallLighting, FOW_UNIFORMS } from "./fow.js";
 import { sfx, setUnderground, setExteriorRain } from "./audio.js";
 import { loadGraphics, resolveGraphics } from "./graphics.js";
 import { buildTaskObjects } from './tasks3d.js';
@@ -24,7 +24,7 @@ import {humanAvatar} from './avatar-policy.js';
 
 const SEAT_BY_ID = Object.fromEntries(SEATS.map((s) => [s.id, s]));
 const W = COLS * CELL, D = ROWS * CELL;
-const tmp = new THREE.Vector3();
+const tmp = new THREE.Vector3(),mirrorEye=new THREE.Vector3();
 const avatarFrustum=new THREE.Frustum(),avatarProjection=new THREE.Matrix4(),avatarSphere=new THREE.Sphere(new THREE.Vector3(),1.6);
 
 const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x020203 });
@@ -137,16 +137,23 @@ export class View {
     progress("Building the mansion…",4);
     const m = buildMansion(this.q);
     this.mansion = m;
+    m.key.shadow.autoUpdate=false;m.key.shadow.needsUpdate=true;
     // Keep a fixed light count. Showing/hiding source lamps changed the shader
     // variant as the camera walked, causing expensive recompiles mid-game.
     this.roomLightSlots=Array.from({length:8},()=>{const light=new THREE.PointLight(0xffffff,0,1,2);light.castShadow=false;this.scene.add(light);return light;});
     this.scene.add(m.root);
+    this.hallLightTexture=prepareHallLighting(m.lights);
     // The first-person camera hides its avatar's head. Restore it only while
     // a mirror captures the scene so the player sees their complete reflection.
     for (const mirror of m.mirrors) {
       const capture = mirror.onBeforeRender;
       mirror.onBeforeRender = (...args) => {
         const viewer = this.mirrorViewer;
+        // Frustum visibility alone includes mirrors behind solid room walls.
+        // Do not render an entire reflected mansion for an occluded mirror.
+        if(this.mirrorCaptureDepth>0)return;
+        if(viewer){mirror.getWorldPosition(tmp);args[2].getWorldPosition(mirrorEye);if(!losClear(mirrorEye.x,mirrorEye.z,tmp.x,tmp.z,this.snap?.doors||[]))return;}
+        this.profileMirrorCaptures=(this.profileMirrorCaptures||0)+1;
         const mirrorGrime = this.taskObjects?.mirrorGrime;
         const grimeVisible = mirrorGrime?.visible;
         this.mirrorCaptureDepth = (this.mirrorCaptureDepth || 0) + 1;
@@ -276,8 +283,10 @@ export class View {
       this.preparedAvatar(id,true);await pause();
     }
     this.applyGraphics(this.graphics);
+    progress('Preparing evidence textures…',65);await prepareBloodAssets(this.renderer,pause);
+    this.blood.applyStains([0,1,2,3].map(k=>['warm-'+k,0,0,.2,0,k,0,1]),true);this.blood.applyMarks([['warm-wet',0,0,.2,0]]);
     progress('Preparing textures…',66);
-    const textures=new Set();this.scene.traverse(o=>{for(const m of Array.isArray(o.material)?o.material:o.material?[o.material]:[])for(const value of Object.values(m))if(value?.isTexture)textures.add(value);});
+    const textures=new Set([this.hallLightTexture]);this.scene.traverse(o=>{for(const m of Array.isArray(o.material)?o.material:o.material?[o.material]:[])for(const value of Object.values(m))if(value?.isTexture)textures.add(value);});
     for(const texture of textures){this.renderer.initTexture(texture);await pause();}
     // The same twelve local point lights and indoor shadow layout used in play.
     for(const light of this.mansion.lights)light.visible=false;this.mansion.moon.castShadow=false;
@@ -301,11 +310,12 @@ export class View {
         const light=this.mansion.lights[i];if(light.userData.control!=='room:'+light.userData.room)continue;
         progress('Preparing mansion views…',87+10*i/this.mansion.lights.length);
         camera.position.set(light.position.x,1.6,light.position.z+.4);camera.lookAt(light.position.x,1.4,light.position.z-2);camera.updateMatrixWorld();
-        this.mansion.key.intensity=1;this.renderer.clear();this.renderer.render(this.scene,camera);await pause();
+        this.mansion.key.intensity=1;this.mansion.key.shadow.needsUpdate=true;this.renderer.clear();this.renderer.render(this.scene,camera);await pause();
       }
       for(const ceiling of this.mansion.ceilings)ceiling.visible=true;
     }finally{
       this.mansion.key.intensity=0;
+      this.effectWarmMaterials=[...this.blood.stains.values()].flatMap(s=>[s.mesh.material,s.glow.material,s.outline.material]).concat([...this.blood.marks.values()].map(m=>m.material));this.blood.reset();this.bloodSeen=false;
       for(const [avatar,show]of visible){avatar.root.visible=show;if(avatar!==this.avatars.get(avatar.id)&&avatar!==this.butlerAv)avatar.root.removeFromParent();}for(const [mirror,show]of mirrors)mirror.visible=show;this.renderer.setRenderTarget(wasTarget);this.renderer.setScissorTest(wasScissor);this.renderer.setViewport(wasViewport);this.renderer.domElement.style.visibility=wasCanvasVisibility;
     }
     document.body.dataset.preparedPrograms=String(this.renderer.info.programs.length);document.body.dataset.preparedGeometries=String(this.renderer.info.memory.geometries);document.body.dataset.preparedTextures=String(this.renderer.info.memory.textures);
@@ -654,6 +664,8 @@ export class View {
       l.intensity = u.base * k;
       u.k = k;
     }
+    const hall=m.lights.filter(l=>l.userData.control==='room:hallway');
+    FOW_UNIFORMS.hallLightPower.value=hall.length?hall.reduce((sum,l)=>sum+(l.userData.k??1),0)/hall.length:0;
     for (const sp of m.glowSprites) { const gl = sp.userData; const k = this.flicker || this.blackout > 0 ? (m.lights.find((l) => l.userData.room === gl.room)?.userData.k ?? 1) : 1; sp.material.opacity = fixtureOn(this.snap?.lightsOff,gl.control||'room:'+gl.room)?0.5*k:0; }
     this.lightningT -= dt;
     if (this.lightningT <= 0) { this.lightningT = 18 + Math.random() * 30; this.flash = 1; if (this.views[0]?.mode !== "title" || Math.random() < 0.5) setTimeout(() => sfx("thunder", 0.5), 600 + Math.random() * 1500); }
@@ -682,7 +694,7 @@ export class View {
 
   // ---------- render ----------
   render(dt) {
-    this.profilePrepareMs=0;this.profileDrawMs=0;
+    this.profilePrepareMs=0;this.profileDrawMs=0;this.profileMirrorCaptures=0;
     const r = this.renderer;
     if (r.xr.isPresenting) { this.renderXR(dt); return; }
     this.animateKillStage();
@@ -737,10 +749,11 @@ export class View {
     // Only the nearest lamps enter an indoor shader. Distant room lights add
     // fragment work even when their attenuation makes them invisible.
     const lightOrigin = xr ? this.xrRig.position : v.cam.position;
+    const localLights=m.lights.filter(l=>l.userData.control!=='room:hallway');
     const lamps = indoor
-      ? new Set([...m.lights].filter(l=>l.intensity>0&&(l.userData.room===roomAtWorld(lightOrigin.x,lightOrigin.z)||losClear(lightOrigin.x,lightOrigin.z,l.position.x,l.position.z,this.snap?.doors||[]))).sort((a, b) => a.position.distanceToSquared(lightOrigin) - b.position.distanceToSquared(lightOrigin)).slice(0, 8))
+      ? new Set(localLights.filter(l=>l.intensity>0&&(l.userData.room===roomAtWorld(lightOrigin.x,lightOrigin.z)||losClear(lightOrigin.x,lightOrigin.z,l.position.x,l.position.z,this.snap?.doors||[]))).sort((a, b) => a.position.distanceToSquared(lightOrigin) - b.position.distanceToSquared(lightOrigin)).slice(0, 8))
       : null;
-    const selected=lamps?[...lamps]:[...m.lights].sort((a,b)=>a.position.distanceToSquared(lightOrigin)-b.position.distanceToSquared(lightOrigin)).slice(0,8);
+    const selected=lamps?[...lamps]:localLights.slice().sort((a,b)=>a.position.distanceToSquared(lightOrigin)-b.position.distanceToSquared(lightOrigin)).slice(0,8);
     for(const lamp of m.lights)lamp.visible=false;
     this.roomLightSlots.forEach((slot,i)=>{const source=selected[i];slot.intensity=source?.intensity||0;if(source){slot.position.copy(source.position);slot.color.copy(source.color);slot.distance=source.distance;slot.decay=source.decay;}});
     const lightState=snapshotLighting(this.snap,this.props);
@@ -809,6 +822,10 @@ export class View {
       for (const l of m.lights) { if (l.userData.room !== room||l.intensity<=0) continue; const d = Math.hypot(l.position.x - pos.x, l.position.z - pos.z); if (d < best) { best = d; src = l; } }
       if (!src) for (const l of m.lights) { const d = Math.hypot(l.position.x - pos.x, l.position.z - pos.z); if (l.intensity>0&&losClear(pos.x,pos.z,l.position.x,l.position.z,this.snap?.doors||[])&&d < best && d < 9) { best = d; src = l; } }
     }
+    if(src?.userData.control==='room:hallway')src=null;
+    // A zero-intensity light still renders a shadow map in Three r160.
+    // Preserve shader layout, but skip that unused depth pass in corridors.
+    k.shadow.needsUpdate=!!src;
     if (src) {
       k.position.set(src.position.x, src.position.y + .1, src.position.z);
       k.target.position.set(src.position.x, 0, src.position.z);

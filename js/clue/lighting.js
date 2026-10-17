@@ -16,6 +16,8 @@ export const fixtureOn=(off,id)=>!off?.[id];
 export function illuminationAt(x,z,{off={},props=[],fires=[],doors=[]}={}){
  const room=roomAtWorld(x,z);
  let value=room==='tunnels' ? .012 : fixtureOn(off,'room:'+room) ? .88 : .025;
+ // A fully lit room is already at the perception ceiling; avoid scanning every prop per FOW cell.
+ if(value>=.88)return value;
  const contribution=(sx,sz,power)=>{const d=Math.hypot(x-sx,z-sz);if(d<7&&roomAtWorld(sx,sz)===room&&losClear(x,z,sx,sz,doors))value+=power/(1+(d/1.8)**2);};
  for(const f of FLOOR_LAMPS)if(fixtureOn(off,'lamp:'+f.id))contribution(f.x,f.z,.65);
  for(const p of props)if(!p.hidden&&!p.gone&&!p.pocket){if(p.kind==='lamp'&&fixtureOn(off,'prop:'+p.id))contribution(p.x,p.z,.7);else if(p.lit)contribution(p.x,p.z,.65);}
@@ -23,6 +25,6 @@ export function illuminationAt(x,z,{off={},props=[],fires=[],doors=[]}={}){
  return Math.min(1,value);
 }
 export function snapshotLighting(snap,objects){
- const props=objects?[...objects.values()].filter(g=>g.userData.p).map(g=>({id:g.userData.p.id,kind:g.userData.p.kind,x:g.position.x,z:g.position.z,hidden:!g.visible,lit:g.userData.lit})):[];
+ const props=objects?[...objects.values()].filter(g=>g.userData.p&&(g.userData.p.kind==='lamp'||g.userData.lit)).map(g=>({id:g.userData.p.id,kind:g.userData.p.kind,x:g.position.x,z:g.position.z,hidden:!g.visible,lit:g.userData.lit})):[];
  return{off:snap?.lightsOff||{},props,fires:snap?.fires||[],doors:snap?.doors||[]};
 }

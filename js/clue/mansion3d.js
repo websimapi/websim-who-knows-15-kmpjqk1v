@@ -316,6 +316,7 @@ export function buildMansion(quality = {}) {
     else if (kind === "exterior") m = M(0xffffff, { map: stoneWallTexture(), roughness: 0.95 });
     else if (kind === "reveal") m = M(0x8a8478, { map: plasterTexture(), roughness: 1 });
     else if (kind === "sill") m = MAT.marble;
+    m.userData.fixedHallSurface=ch==='.'&&(kind==='floor'||kind==='wall')||kind==='ceiling';
     m.side = kind === "ceiling" ? THREE.FrontSide : THREE.FrontSide;
     m.shadowSide = THREE.DoubleSide;
     mats.set(key, m);
@@ -338,7 +339,7 @@ export function buildMansion(quality = {}) {
   }
 
   // ---------- furniture ----------
-  const controlledMaterials=[],switches=[];
+  const controlledMaterials=[],switches=[],roomFurniture=[];
   const cabs = {}, fires = {}, glows = [], pendulums = [], pushHolders = {}, mirrors = [];
   let burner = null;
   for (const f of FURNITURE) {
@@ -346,6 +347,7 @@ export function buildMansion(quality = {}) {
     if (!built) continue;
     const holder = new THREE.Group();
     holder.add(built.group);
+    roomFurniture.push({holder,room:f.room});
     holder.position.set(f.x, f.y || 0, f.z);
     holder.rotation.y = f.rot || 0;
     root.add(holder);
@@ -425,8 +427,9 @@ export function buildMansion(quality = {}) {
   // Hallway lanterns.
   const hall = regions["."].map(([c, r]) => toWorld(c + 0.5, r + 0.5));
   const picks = [hall[0]];
-  while (picks.length < 7) { let best = null, bd = -1; for (const p of hall) { const d = Math.min(...picks.map((q) => Math.hypot(p.x - q.x, p.z - q.z))); if (d > bd) { bd = d; best = p; } } picks.push(best); }
-  for (const p of picks) { addLight(p.x, WALL_H - 0.7, p.z, 0xffc98a, 5, "hallway", 14); glows.push({ x: p.x, y: WALL_H - 0.6, z: p.z, s: 0.9, room: "hallway", pendant: true }); }
+  // Cover corridor branches, rather than just seven points across a 55m house.
+  while(picks.length<hall.length){let best=null,bd=-1;for(const p of hall){const d=Math.min(...picks.map(q=>Math.hypot(p.x-q.x,p.z-q.z)));if(d>bd){bd=d;best=p;}}if(bd<=4.5)break;picks.push(best);}
+  for(const p of picks){addLight(p.x,WALL_H-.7,p.z,0xffdfb5,22,"hallway",12);glows.push({x:p.x,y:WALL_H-.6,z:p.z,s:.9,room:"hallway",pendant:true});}
   // Hanging lanterns / pendants for rooms without a chandelier.
   const lanternMat = M(0x1a1612, { metalness: 0.6, roughness: 0.4 });
   for (const gl of glows.filter((g) => g.pendant)) {
@@ -495,5 +498,5 @@ export function buildMansion(quality = {}) {
   key.shadow.camera.near = 0.3; key.shadow.camera.far = 18;
   root.add(key); root.add(key.target);
 
-  return { controlledMaterials,switches,root, ceilings, roof, doors, cabs, pushHolders, fires, burner, stoveLight, balls, lights, glowSprites, pendulums, moon, hemi, key, windows, mirrors };
+  return { controlledMaterials,switches,roomFurniture,root, ceilings, roof, doors, cabs, pushHolders, fires, burner, stoveLight, balls, lights, glowSprites, pendulums, moon, hemi, key, windows, mirrors };
 }

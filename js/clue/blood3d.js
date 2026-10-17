@@ -116,6 +116,13 @@ function wetTexture() {
   return WET_TEX;
 }
 
+// Fixed forensic textures used by the initial dirt task and later evidence.
+// Build each canvas between yields rather than on the first gameplay stain.
+export async function prepareBloodAssets(renderer,pause){
+ if(!VARIANTS){VARIANTS=[[],[],[],[]];for(let k=0;k<4;k++)for(let i=0;i<(k===1?4:3);i++){const set=makeTextures(k,1+k*97+i*13);VARIANTS[k].push(set);for(const map of Object.values(set))renderer.initTexture(map);await pause();}}
+ renderer.initTexture(wetTexture());
+}
+
 const PLANE = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
 const hash = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
 

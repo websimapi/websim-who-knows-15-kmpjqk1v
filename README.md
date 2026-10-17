@@ -211,3 +211,34 @@ The hair shader also derives a smooth tangent along each ribbon and shades it wi
 Implementation references: [Three.js r160 compilation and texture initialization](https://raw.githubusercontent.com/mrdoob/three.js/r160/src/renderers/WebGLRenderer.js), [Three.js opaque output alpha](https://raw.githubusercontent.com/mrdoob/three.js/r160/src/renderers/shaders/ShaderChunk/opaque_fragment.glsl.js), and [NVIDIA hair geometry, guide dynamics and fiber rendering discussion](https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-23-hair-animation-and-rendering-nalu-demo).
 
 The ribbon renderer now faces each fiber toward the camera around its simulated centerline. It uses the physical width rather than the vanishing projected width of an edge-on flat card, with a small minimum coverage for distant fibers. This removes another cause of grainy on/off flashes while preserving the simulated strand center, cut length and body clearance.
+
+
+### Mansion-first loading, corridor lights and performance diagnostics
+
+Startup displays only the Who Knows? / Murder At Midnight Mansion title, a loading bar and stage text. The house is built and drawn into the background before robot or human assets load. The menu appears after all nine humans, textures, shader preparation and GPU draws complete. Progress represents preparation stages, not byte download percentage.
+
+Prewarming now draws the whole mansion from above and below and samples fixture positions, including mirror captures and the indoor shadow pass. The previous four centre views could leave off-camera geometry buffers untouched until a first visit. Dynamic content and later graphics changes can still require work during play.
+
+Hallway pendants cover every corridor within a 4.5m radius with brighter warm light in normal play. The eight-light shader budget remains fixed. Switches and blackout still turn them off; flickering hallway fixtures retain their previous reduced output rather than multiplying the brighter normal setting. Normal hallway fill is slightly stronger. Visibility texture uploads skip unchanged grids, and lit-room perception avoids redundant prop scans.
+
+`js/clue/performance.js` records startup and one compact 30-second frame summary through relative `POST /api/performance-log` to the Websim database `performance_logs` table. Reports include CPU work, worst update/apply/visibility/draw phases, long tasks, shader/geometry counts and render complexity. These help distinguish first-visit uploads/compilation, simulation stalls and sustained render cost. Frame intervals can include browser scheduling or GPU waits; JavaScript draw timing is not a GPU timer. Hidden tabs are excluded.
+
+Reports use a random per-page session ID without player identity, positions, chat or speech. Each page sends at most 40 reports, with server rate limiting and periodic pruning to seven days / 10,000 records. The project owner can read the newest reports through `GET /api/debug/performance?limit=50`; other users receive 403. `body.dataset.performanceLog` reports persistence status and `performanceSummary` exposes the latest local summary for review. Logging failure never blocks play. Local stub database behaviour does not establish production persistence; review the staged deployment.
+
+The first real demo snapshot now creates and seats its generated task/held items under the loading overlay, before texture/program/buffer warmup. The first full title view is drawn before the menu is revealed. Adaptive resolution uses a sustained three-second signal and a twelve-second resize cooldown to reduce repeated framebuffer reallocation stalls. Owner diagnostics can also be read from Graphics settings → Performance diagnostics.
+
+Indoor rendering conservatively skips furniture in closed rooms other than the viewer's room. Every room with an open door remains eligible; the shell/doors remain intact, and visibility is restored after each split-screen view. This reduces off-screen furniture and shadow draws without hiding a room viewed through an open doorway. Flicker and blackout also reduce indoor ambient fill.
+
+The warmup also advances character/hair dynamics before revealing the menu. Slow-frame reports further split snapshot application into actors, props and world effects, so a later spike can be attributed without inferring it from FPS alone. Report requests time out after ten seconds and never hold the frame loop.
+
+### Fixed hallway illumination
+
+Corridor lantern lighting is now prepared once as a shared world-space irradiance texture. All hallway lamps contribute independently of the camera, rather than entering/leaving the nearest-eight point-light slots. The moving hallway key light is disabled so it cannot create a following bright patch. Room point lights retain their fixed shader budget. Hall switches, flicker and blackout scale the shared light field; no rebake occurs while walking. This is baked diffuse corridor illumination, so hallway lanterns do not cast dynamic character shadows.
+
+Lit hallway floors, walls and ceilings also keep their normal illumination at distance instead of receiving the visibility grid's distance dimming. Actors, evidence and interactable props retain perception limits. Turning the hallway off or entering flicker/blackout restores the dark response.
+
+Performance review uses **Only Human Avatars**, including AI seats and the butler, to include the complete human/hair workload. An all-human review exposed lazy forensic/dirt texture generation at the first task update; the fixed canvas variants, wet texture and decal shader layouts are now prepared under the loading overlay.
+
+The key light's shadow map updates only when that light is contributing. Keeping its intensity at zero alone still runs the depth pass in [Three.js r160](https://raw.githubusercontent.com/mrdoob/three.js/r160/src/renderers/webgl/WebGLShadowMap.js); manual per-light updates skip this unused work in corridors while keeping the shader light/shadow counts stable. Active room lighting continues to update its shadows.
+
+Mirror captures now require a clear wall/door line of sight from the active viewer and exclude recursive captures. A mirror merely falling inside the camera frustum behind a wall no longer renders another complete mansion. Visible mirrors still capture the current scene; loading prepares their resources in advance. Performance reports include actual mirror capture count.

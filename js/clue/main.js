@@ -11,6 +11,7 @@ import { beginFrame, read, joinPresses, connectedPads, deviceLabel } from "./inp
 import { sfx, startAmbience, startGameMusic } from "./audio.js";
 import { loadSouls } from "./souls.js";
 import { saveGraphics } from "./graphics.js";
+import { PerformanceJournal } from "./performance.js";
 import { setupManual } from "./manual.js";
 
 const $ = (s) => document.querySelector(s);
@@ -20,6 +21,8 @@ const touchDevice = matchMedia("(pointer: coarse)").matches || !!navigator.userA
 document.body.classList.toggle("touch-capable", touchDevice);
 const view = new View($("#stage"));
 const manual = setupManual();
+const performanceJournal=new PerformanceJournal();
+$('#performanceRead').onclick=async()=>{const output=$('#performanceReports');output.textContent='Loading reports…';try{const response=await fetch('/api/debug/performance?limit=12');const data=await response.json();if(!response.ok)throw new Error(data.error||'Reports unavailable');output.textContent=JSON.stringify(data.reports,null,2);}catch(error){output.textContent=error.message;}};
 let demo = null, game = null, net = null, screen = "title";
 let settingsOpen = false;
 const menuFocus = new Focus();
@@ -300,7 +303,6 @@ function exitToTitle() {
   lobbyNetWired = false;
   if (net?.lobby) net.leave();
   clearTitleLive();
-  startDemo(true);
   show("title");
   startGameMusic();
   connectTitle().catch(() => {});
@@ -476,7 +478,8 @@ let frameStats={start:performance.now(),frames:0,work:0,render:0,peak:0};
 function frame(now) {
   const workStart=performance.now();
   now ??= performance.now();
-  const dt = Math.min(0.1, (now - last) / 1000);
+  const elapsed=now-last;
+  const dt = Math.min(0.1, elapsed / 1000);
   last = now;
   beginFrame();
   const previewOpen=!!document.querySelector('#characterPreviewMenu[open]');
@@ -496,7 +499,9 @@ function frame(now) {
   } else menuInput();
   const renderStart=performance.now();
   if ((game || demo)&&!previewOpen) view.render(dt);
-  const frameWork=performance.now()-workStart;frameStats.frames++;frameStats.work+=frameWork;frameStats.peak=Math.max(frameStats.peak,frameWork);frameStats.render+=performance.now()-renderStart;
+  const renderMs=performance.now()-renderStart;
+  const frameWork=performance.now()-workStart;
+  performanceJournal.frame(elapsed,frameWork,renderStart-workStart,renderMs,view,{screen,mode:game?.mode||'title',phase:view.snap?.ph,avatarMode:view.snap?.avatarMode});frameStats.frames++;frameStats.work+=frameWork;frameStats.peak=Math.max(frameStats.peak,frameWork);frameStats.render+=performance.now()-renderStart;
   const reportElapsed=performance.now()-frameStats.start;
   if(reportElapsed>=2000){
     document.body.dataset.gameFps=(frameStats.frames*1000/reportElapsed).toFixed(1);
@@ -538,13 +543,23 @@ async function setupVR() {
 
 (async () => {
   try {
-    await Promise.all([view.init(), loadSouls()]);
-    await view.prepareGuests(message=>{if($('#guestLoading'))$('#guestLoading').textContent=message;});
+    const progress=(message,value)=>{if($('#guestLoading'))$('#guestLoading').textContent=message;if(Number.isFinite(value)&&$('#bootProgress'))$('#bootProgress').value=value;};
+    await Promise.all([view.init(progress), loadSouls()]);
+    // Prepare the real initial prop set as well as the authored mansion. Some
+    // carried/task items are instantiated only when the first snapshot arrives.
+    progress('Preparing mansion objects…',19);
+    startDemo(true);view.apply(demo.snapshot(true),0,true);
+    await view.prepareGuests(progress);
+    view.apply(demo.snapshot(true),0,true);
+    view.render(0);
+
+    progress('The mansion is ready',100);
+    performanceJournal.ready(view);
+    document.body.classList.remove('booting');$('#bootLoading')?.remove();
     document.querySelectorAll('[data-go]').forEach(button=>button.disabled=false);
     $('#guestLoading')?.remove();
   }
   catch (e) { console.error(e);if($('#guestLoading'))$('#guestLoading').textContent='Guests could not load. Please reload the game.';return; }
-  startDemo(true);
   show("title");
   last=performance.now();frameStats={start:last,frames:0,work:0,render:0,peak:0};
   view.renderer.setAnimationLoop((t) => frame(t));
