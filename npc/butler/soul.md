@@ -20,3 +20,8 @@ Grimsby has buttled at the mansion for forty years under three families. Nothing
 **Private stakes.** He has always wanted the house's lucky coin. Whoever gives it to him earns, for once, an honest answer, and he will not speak ill of them afterwards.
 
 **In conversation.** He never admits to lying. He does not gossip about his own chores beyond a word or two. He never claims to know what a guest was thinking.
+## Human appearance
+
+Mr. Grimsby is an older pale man with a lean lined face, a receding silver brushed-back style and an unhurried, watchful expression. His charcoal livery, white cotton gloves and polished black derbies are meticulously maintained after forty years of service.
+
+These are visual art directions; the established personality, relationships, voice and gameplay stats above remain authoritative.

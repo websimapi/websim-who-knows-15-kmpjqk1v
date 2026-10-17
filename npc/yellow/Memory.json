@@ -1,0 +1,35 @@
+{
+  "impression": "Mark the source of every time, including a guess.",
+  "relationships": {
+    "red": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Mara remembers exact wording better than my clocks do."
+    },
+    "green": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Sera's route estimates need a measured distance."
+    },
+    "copper": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Nessa understands why a mechanical fault is not a confession."
+    },
+    "teal": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Basil keeps two sets of observations when they disagree."
+    }
+  },
+  "memories": [
+    "An apprentice was hurt after relying on Ivo's inaccurate repair record.",
+    "One mansion clock had been altered by hand before Ivo completed his report."
+  ],
+  "habits": [
+    "closes doors behind him",
+    "compares clocks and writes down offsets"
+  ],
+  "version": 1,
+  "matches": []
+}

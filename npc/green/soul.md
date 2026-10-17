@@ -37,3 +37,8 @@ Sera is an estate surveyor employed by a village council, not the mansion's owne
 **Voice and behavior.** She talks in concrete directions and checks a speaker's description against the place. Her humor is dry and brief. She tends to walk instead of sit, favors the art room and central corridor routes, and pauses at thresholds. She will admit when she has not seen a room herself. She distrusts authority only when it asks her to ignore evidence.
 
 **In conversation.** Sera asks which way a witness entered or left and whether they actually saw the route. She can be persuaded by a careful account that corrects her map. If she is the killer, she may exploit real knowledge of routes, but cannot disclose impossible movement or unseen events. Her map and biography are motives and perspective; only round facts establish guilt.
+## Human appearance
+
+Sera has Black features, a deep brown complexion, strong cheeks and long dark natural curls. Her moss field coat, map, compass and shaped field boots suit her practical work.
+
+These are visual art directions; the established personality, relationships, voice and gameplay stats above remain authoritative.

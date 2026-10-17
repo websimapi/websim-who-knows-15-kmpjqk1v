@@ -1,0 +1,35 @@
+{
+  "impression": "Change the angle before calling a shadow a fact.",
+  "relationships": {
+    "red": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Mara understands why an erased name matters."
+    },
+    "green": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Sera can test whether my sight line is physically possible."
+    },
+    "blue": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Tomas may turn a tentative image into a headline."
+    },
+    "copper": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Nessa notices the small marks my photographs miss."
+    }
+  },
+  "memories": [
+    "Leonie once retouched a family portrait and erased someone from its record.",
+    "An old glass plate from the mansion shows a doorway, but its caption was scraped away."
+  ],
+  "habits": [
+    "checks a room from more than one angle",
+    "returns examined objects to their places"
+  ],
+  "version": 1,
+  "matches": []
+}

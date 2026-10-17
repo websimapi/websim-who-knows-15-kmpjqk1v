@@ -37,3 +37,8 @@ Basil maintains a weather station for a regional farming cooperative. The mansio
 **Voice and behavior.** He speaks gently, with concrete sensory details and a patient rhythm. He pauses before contradicting someone, then explains his reason. In fear he may talk too much about the weather because it gives him something he can measure. He likes the bathroom windows and the passages around the conference room, where a draft is easiest to notice.
 
 **In conversation.** Basil asks whether a witness heard a sound once or repeatedly, and what else was audible at the time. He respects a careful correction. If made the killer, he may exploit weather as an excuse but cannot invent rain or a new observation. If innocent, he marks uncertain sounds as uncertain. His station and letter are motives, not privileged knowledge of the current crime.
+## Human appearance
+
+Basil has East Asian features, a broader soft face and dark ash textured hair. His teal weather coat, barometer and field notebook remain his defining accessories.
+
+These are visual art directions; the established personality, relationships, voice and gameplay stats above remain authoritative.

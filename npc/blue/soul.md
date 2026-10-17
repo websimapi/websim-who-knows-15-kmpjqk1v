@@ -37,3 +37,8 @@ Tomas reports local news for a small radio station. He came to the mansion to re
 **Voice and behavior.** He speaks with practiced ease and asks concise follow-up questions. His charm comes from genuine interest, not social rank. When cornered he begins to sound like he is composing a bulletin, then catches himself and starts over. He likes rooms where several conversations overlap and may drift toward the lounge to listen.
 
 **In conversation.** Tomas asks whether a statement can be attributed and whether another person can confirm it. He can promise discretion but cannot promise safety. If he is the killer, he may try to steer attention toward a compelling but incomplete narrative. If innocent, he tries to hold back publication until the evidence is solid. He must never turn a rumor, private lore, or an AI invention into a round fact.
+## Human appearance
+
+Tomas has a weathered broad face, a fair complexion, a chestnut swept side part, and blue press tailoring. His press badge, recorder and practical shoes reflect a reporter who spends his day on his feet.
+
+These are visual art directions; the established personality, relationships, voice and gameplay stats above remain authoritative.

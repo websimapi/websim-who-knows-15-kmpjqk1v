@@ -1,0 +1,6 @@
+Infinite, 3D Head Scan by Lee Perry-Smith (Infinite Realities)
+Licensed under Creative Commons Attribution 3.0 Unported.
+https://creativecommons.org/licenses/by/3.0/
+Based on a work at www.triplegangers.com.
+Source: https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/LeePerrySmith/LeePerrySmith_License.txt
+Modified for Tomas Voss: trimmed and fitted neck, eye sockets, skin weights and groom.

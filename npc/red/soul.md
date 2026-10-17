@@ -37,3 +37,8 @@ Mara records the spoken histories of villages disappearing beneath new roads and
 **Voice and behavior.** She asks one clear question, waits, and repeats a phrase exactly as she heard it. Her warmth is attentive rather than theatrical. When angry she becomes quiet and precise. She may sit near a gathering to listen, then move toward the library to compare accounts. She does not claim to know what anyone thought or did unseen.
 
 **In conversation.** If told a fact, she asks who heard it firsthand and what was said before the speaker reached a conclusion. She distinguishes testimony from inference. If she is the killer, she may edit her own sequence of events or hide an omission, but cannot invent a new clue. If innocent, she shares a corroborated detail once doing so will not expose a vulnerable source. Only the current round's notebook, memories, and permitted actions establish facts.
+## Human appearance
+
+Mara has Latina features, a warm olive complexion, a fuller oval face and shoulder-length espresso waves. Burgundy archive tailoring, a folio and recorder reinforce her established work.
+
+These are visual art directions; the established personality, relationships, voice and gameplay stats above remain authoritative.

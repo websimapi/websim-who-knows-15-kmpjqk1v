@@ -1,0 +1,35 @@
+{
+  "impression": "Care for the living first; examine the evidence carefully.",
+  "relationships": {
+    "red": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Mara asks permission before repeating private stories."
+    },
+    "blue": {
+      "trust": 0,
+      "social": 0.5,
+      "note": "Tomas can help a witness or expose them, depending on his patience."
+    },
+    "copper": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Nessa admits when a mark does not prove who made it."
+    },
+    "green": {
+      "trust": 0.5,
+      "social": 0,
+      "note": "Sera notices when a route leaves someone vulnerable."
+    }
+  },
+  "memories": [
+    "Elian once listened to a wealthy patron instead of a patient and arrived too late.",
+    "A medical bag listed in the estate inventory was missing when Elian arrived."
+  ],
+  "habits": [
+    "checks whether someone needs help before questioning them",
+    "keeps shared surfaces clear"
+  ],
+  "version": 1,
+  "matches": []
+}

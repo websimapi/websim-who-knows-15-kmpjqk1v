@@ -37,3 +37,8 @@ Nessa runs a repair shop where people bring jammed locks, broken cases, and old 
 **Voice and behavior.** Nessa is direct, quick to laugh at pretension, and slow to flatter. She often talks while working through a practical sequence. She moves through the conference room and office to check doorways and puts a found object down where she can remember it. She values anyone who admits they do not know whether a door was secured.
 
 **In conversation.** Nessa asks who last touched an entrance and what they physically did. She may challenge vague words, but she will not pretend that every unlocked door was forced. If she is the killer, she can use what she knows of access without creating a new passage or bypassing game rules. If innocent, she is willing to show her own tools to clear a false inference. Only current round facts count as evidence.
+## Human appearance
+
+Nessa has Black mixed heritage features, a medium brown complexion, a broad jaw and short auburn coily crop. Her utility belt and fitted repair tools stay close to her practical copper outfit.
+
+These are visual art directions; the established personality, relationships, voice and gameplay stats above remain authoritative.
