@@ -336,6 +336,7 @@ export class View {
     this.taskObjects?.update(snap.taskScene, snap.painting);
     this.rows = new Map(snap.chars.map((r) => [r[0], r]));
     const cut = this.cutStage && this.time - this.cutStage.t0 < this.cutStage.dur ? this.cutStage : null;
+    const talkPartners=new Map();for(const v of this.views)if(v.mode==='convo'&&v.pair){talkPartners.set(v.pair[0],v.pair[1]);talkPartners.set(v.pair[1],v.pair[0]);}
     for (const row of snap.chars) {
       const [id, x, z, yaw, mv, alive, , anim, , seat, , , pitch] = row;
       let a = this.avatars.get(id);
@@ -354,10 +355,11 @@ export class View {
       const acting = !!cut && (id === cut.killer || id === cut.victim);
       const cx = acting ? id === cut.killer ? cut.kx : cut.x : x;
       const cz = acting ? id === cut.killer ? cut.kz : cut.z : z;
-      const partnerRow = row[19] && this.rows.get(row[19]);
-      const partner = row[19] === 'butler' && snap.butler ? { x: snap.butler[0], z: snap.butler[1], seat: false }
+      const partnerId=row[19]||talkPartners.get(id);
+      const partnerRow = partnerId && this.rows.get(partnerId);
+      const partner = partnerId === 'butler' && snap.butler ? { x: snap.butler[0], z: snap.butler[1], seat: false }
         : partnerRow ? { x: partnerRow[1], z: partnerRow[2], seat: !!partnerRow[9] } : null;
-      const conversing = !acting && !!row[6] && !!partner && !!alive && !row[16] && Math.hypot(partner.x - x, partner.z - z) > .05;
+      const conversing = !acting && (!!row[6]||talkPartners.has(id)) && !!partner && !!alive && !row[16] && Math.hypot(partner.x - x, partner.z - z) > .05;
       const conversationYaw = conversing ? Math.atan2(partner.x - x, partner.z - z) : yaw;
       const bodyYaw = s ? s.yaw : conversing ? conversationYaw : yaw;
       const listenYaw = conversing && s ? Math.max(-1.15, Math.min(1.15, Math.atan2(Math.sin(conversationYaw - bodyYaw), Math.cos(conversationYaw - bodyYaw)))) : 0;
@@ -370,10 +372,11 @@ export class View {
       const wind = [windSpeed*.9, 0, windSpeed*.35];
       a.update(dt, { x: acting ? cx : s ? s.x : x, z: acting ? cz : s ? s.z : z, yaw: acting ? face : bodyYaw,
         mv: acting ? 0 : row[16] ? 0 : mv, alive: acting ? true : !!alive, anim: acting ? 0 : row[16] ? 0 : anim,
-        seat: acting ? false : !!s, seatH: s?.h, pitch: acting ? 0 : row[16] ? 0 : pitch || 0, ko: acting ? false : !!row[16], conversing, listenYaw, listenPitch, wind }, snapAll || !!acting);
+        seat: acting ? false : !!s, seatH: s?.h, pitch: acting ? 0 : row[16] ? 0 : pitch || 0, ko: acting ? false : !!row[16], conversing, listenYaw, listenPitch, wind, deferHair:true }, snapAll || !!acting);
       if (!acting && alive && !row[16]) a.poseCarry(!!row[10], !!row[13], !!row[10] && row[10] === row[13]);
       if (!acting && anim === 'dart' && alive && !row[16]) a.poseThrow();
       else if (!acting && alive && !row[16] && ['bathroom','defrag','lettuce','paint','books','papers','clock','music'].includes(anim)) a.poseWork(anim);
+      a.updateHair(dt,snapAll||!!acting);
     }
     const bt = snap.butler;
     if (this.butlerAv) {

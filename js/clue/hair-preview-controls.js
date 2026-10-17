@@ -1,7 +1,7 @@
 // Preview haircuts are local studies, not changes to an active game match.
 import * as THREE from 'three';
 import {SUSPECT_BY_ID,BUTLER} from './data.js';
-import { speak,stopSpeak } from './audio.js';
+import { speak,stopSpeak,unlockSpeech } from './audio.js';
 export function installHairPreviewControls({avatar,camera,renderer,controls,status}){
   if(!avatar?.haircuts)return {wind:[0,0,0]};
   const panel=document.querySelector('.controls'),group=document.createElement('span');group.style.cssText='display:contents';
@@ -16,7 +16,7 @@ export function installHairPreviewControls({avatar,camera,renderer,controls,stat
     panel.insertBefore(label,group);
     label.querySelector('select').onchange=e=>{avatar.lips.previewPose=e.target.value==='audio'?null:{[e.target.value]:.85};};
   }
-  group.querySelector('#speakSample').onclick=async()=>{if(avatar.lips){avatar.lips.previewPose=null;avatar.lips.peakActivity=0;panel.querySelector('[aria-label="Mouth pose"]').value='audio';}stopSpeak();status.textContent='Preparing spoken sample…';await speak('Perhaps we should compare what we actually saw before we decide who to trust.',(avatar.id==='butler'?BUTLER:SUSPECT_BY_ID[avatar.id])?.voice,avatar.id);status.textContent=document.body.dataset.speechState==='unavailable'?'Speech is unavailable on this device':'Spoken sample finished';};
+  group.querySelector('#speakSample').onclick=async()=>{unlockSpeech();if(avatar.lips){avatar.lips.previewPose=null;avatar.lips.peakActivity=0;panel.querySelector('[aria-label="Mouth pose"]').value='audio';}stopSpeak();status.textContent='Preparing spoken sample…';const played=await speak('Perhaps we should compare what we actually saw before we decide who to trust.',(avatar.id==='butler'?BUTLER:SUSPECT_BY_ID[avatar.id])?.voice,avatar.id);status.textContent=played?'Spoken sample finished':`Speech unavailable: ${document.body.dataset.speechError||document.body.dataset.speechState}. Check Character voices in Settings.`;};
   group.querySelector('#inspectShoes').onclick=()=>{camera.position.set(.62,.32,.75);controls.target.set(0,.10,-.04);status.textContent='Soul-specific footwear · rounded toe, shaped heel and contoured sole';};
   group.querySelector('#inspectTorso').onclick=()=>{camera.position.set(.42,1.42,.82);controls.target.set(0,1.29,0);};
   function portrait(offset){

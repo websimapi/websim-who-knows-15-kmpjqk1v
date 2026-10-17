@@ -8,7 +8,7 @@ import { Net } from "./net.js";
 import { interpolateSnapshot } from "./snapshotInterpolation.js";
 import { Focus, portrait } from "./ui.js";
 import { beginFrame, read, joinPresses, connectedPads, deviceLabel } from "./input.js";
-import { sfx, startAmbience, startGameMusic } from "./audio.js";
+import { sfx, startAmbience, startGameMusic, installSpeechSettings } from "./audio.js";
 import { loadSouls } from "./souls.js";
 import { saveGraphics } from "./graphics.js";
 import { PerformanceJournal } from "./performance.js";
@@ -21,6 +21,7 @@ const touchDevice = matchMedia("(pointer: coarse)").matches || !!navigator.userA
 document.body.classList.toggle("touch-capable", touchDevice);
 const view = new View($("#stage"));
 const manual = setupManual();
+installSpeechSettings(document.querySelector('#settings .settings-card'));
 const performanceJournal=new PerformanceJournal();
 $('#performanceRead').onclick=async()=>{const output=$('#performanceReports');output.textContent='Loading reports…';try{const response=await fetch('/api/debug/performance?limit=12');const data=await response.json();if(!response.ok)throw new Error(data.error||'Reports unavailable');output.textContent=JSON.stringify(data.reports,null,2);}catch(error){output.textContent=error.message;}};
 let demo = null, game = null, net = null, screen = "title";

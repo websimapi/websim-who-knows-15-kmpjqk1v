@@ -1,6 +1,6 @@
 // The authoritative rules engine. Runs on the local machine (solo/co-op) or
 // on the host (online). Pure logic — no three.js. Positions are world metres.
-import { SUSPECTS, WEAPONS, WEAPON_BY_ID, ROOM_LIST, ROOM_BY_ID, DAY_SECONDS, LAST_DAY, CHECKLIST, FLICKER_SECONDS, BODY_DRAG_SECONDS, POST_KILL_HIDE_SECONDS, BODY_SEARCH_SECONDS, GHOST_HOLD, cellToWorld, roomAtWorld, clockLabel, roomName, weaponName, isBig } from "./data.js";
+import { SUSPECTS, WEAPONS, WEAPON_BY_ID, ROOM_LIST, ROOM_BY_ID, DAY_SECONDS, LAST_DAY, CHECKLIST, FLICKER_SECONDS, BODY_DRAG_SECONDS, POST_KILL_HIDE_SECONDS, BODY_SEARCH_SECONDS, GHOST_HOLD, cellToWorld, roomAtWorld, clockLabel, roomName, weaponName, itemName, isBig } from "./data.js";
 import { ItemMethods, spawnItems, spawnDailySupplies } from "./items.js";
 import { TunnelMethods, spawnTorches } from "./tunnels.js";
 import { WEAPON_SPOTS, TABLE, PROPS, PROP_RADIUS, SEATS, FURNITURE, FURN_BY_ID, BODY_HIDES, POOL, surfaceAt, PUSHABLES, placePushable } from "./layout.js";
@@ -1791,7 +1791,9 @@ export class Match {
     const kills = knownKills(this, this.notes.get(c.id));
     let best = null, bestScore = -Infinity;
     for (const f of mine.values()) {
-      if (theirs.has(f.key) || f.kind === "tod" || f.lie || f.private) continue;
+      const answering=topic&&['where','person','room','weapon'].includes(topic.kind);
+      const relevant=!answering||(topic.kind==='where'?f.kind==='saw'&&f.about===c.id:topic.kind==='person'?f.about===topic.id||f.with===topic.id:topic.kind==='room'?f.room===topic.id:f.weapon===topic.id);
+      if(!relevant||(!answering&&theirs.has(f.key))||f.kind==='tod'||f.lie||f.private)continue;
       if (c.isKiller && (f.about === c.id && f.kind !== "saw" || f.kind === "kill")) continue;
       if (f.about === listenerId && ["saw", "ran"].includes(f.kind)) continue;
       let s = Math.random() * 1.5 + (f.day === this.day ? 1 : 0) + (f.src === "self" ? 1 : 0);
@@ -1888,8 +1890,10 @@ export class Match {
       firstLook: { [a.id]: this.perceive(a, b) > 0.12 ? describeActivity(this, b, a) : null, [b.id]: this.perceive(b, a) > 0.12 ? describeActivity(this, a, b) : null } };
     this.convos.set(id, cv);
     a.convo = b.convo = id;
-    a.path = b.path = null; a.mv = b.mv = 0;
+    a.path = b.path = a.auto = b.auto = null; a.mv = b.mv = a.pace = b.pace = 0;
+    for(const c of [a,b])if(c.seat)this.stand(c);
     a.yaw = Math.atan2(b.x - a.x, b.z - a.z); b.yaw = Math.atan2(a.x - b.x, a.z - b.z);
+    this.faceConversationPartners();
     this.addCard(a, "person", b.id); this.addCard(b, "person", a.id);
     const talked = { kind: "talked", about: a.id, with: b.id, room: a.room, day: this.day, t0: Math.round(this.t) };
     for (const o of this.witnesses(a.room)) if (o === a || o === b || (this.sees(o, a) && this.sees(o, b))) this.learn(o.id, talked, "self");
@@ -2002,7 +2006,7 @@ export class Match {
     // Shares (truthful)
     const shares = [];
     const used = new Set(cv.history.filter((h) => h.fact).map((h) => h.fact));
-    const candidates = [...note.facts.values()].filter((f) => f.kind !== "tod" && !f.private && !used.has(f.key) && !(me.isKiller && f.kind === "kill") && !f.lie && !(f.about === them.id && ["saw", "ran"].includes(f.kind)) && f.src !== `told:${them.id}` && !(f.src === `overheard:${them.id}`));
+    const candidates = [...note.facts.values()].filter(f=>!(f.kind==='talked'&&[me.id,them.id].includes(f.about)&&[me.id,them.id].includes(f.with))&&!(f.kind==='saw'&&f.about===me.id&&topic?.kind!=='where')).filter((f) => f.kind !== "tod" && !f.private && !used.has(f.key) && !(me.isKiller && f.kind === "kill") && !f.lie && !(f.about === them.id && ["saw", "ran"].includes(f.kind)) && f.src !== `told:${them.id}` && !(f.src === `overheard:${them.id}`));
     const score = (f) => {
       let s = (f.day === this.day ? 2 : 0) + (f.src === "self" ? 1 : 0) + Math.random();
       if (f.kind === "body" || f.kind === "kill") s += 8;
@@ -2033,7 +2037,7 @@ export class Match {
     // Ask (learn)
     const asks = [];
     const look = cv.turns === 0 ? cv.firstLook?.[me.id] : null;
-    if (look && /holding|hurrying|busy|staring|lingering/.test(look)) asks.push({ tag: "ask", topic: { kind: "general" }, text: `You were ${look}. What were you doing?`, look });
+    if (look && /holding|hurrying|busy|staring|lingering/.test(look)) asks.push({ tag: "ask", topic: { kind: "activity", id: them.id, observation: look }, text: `You were ${look}. What were you doing?`, look });
     if (kills.length) asks.push({ tag: "ask", topic: { kind: "where", id: them.id }, text: `Where were you around ${clockLabel(kills[kills.length - 1].t)}?` });
     const cards = me.cards.length ? me.cards : [];
     const persons = [...new Set([...cards.filter((x) => x.type === "person").map((x) => x.id), ...[...note.facts.values()].filter((f) => f.kind === "saw").map((f) => f.about)])].filter((id) => id !== me.id && id !== them.id && this.chars.get(id)?.alive);
@@ -2057,12 +2061,15 @@ export class Match {
     if ((boldness >= 0.35 || trait(me.id, "observation") >= 0.85 || this.day >= 3) && !them.searchedBy?.has(`${me.id}:${this.day}`)) {
       const search = { tag: "search", text: soulLine(me.id, "searchLine") || choice(["Turn out your pockets, would you?", "Mind if I check your pockets?"]), tone: "bold", kind: "Search" };
       // Preserve the killer's truthful claim and both Deceit choices.
-      const replace = out.length >= 4 ? out.findLastIndex((o) => o.tag !== "share" && o.kind !== "Deceit") : -1;
+      const replace = out.length >= 4 ? out.findLastIndex((o) => o.tag !== "share" && o.kind !== "Deceit" && !o.look) : -1;
       if (replace >= 0) out.splice(replace, 1, search);
       else out.push(search);
     }
     if (this.canOfferTeam(me, them, cv)) out.splice(Math.min(out.length, 2), 0, this.teamOption(me));
     if(this.canAskHair(me,them))out.unshift({tag:'hairAsk',text:me.isKiller?'May I help tidy your hair at the bathroom chair?':'My task is to cut hair. May I give you a trim in the bathroom?',tone:'warm',kind:'Share task'});
+    // Keep ordinary conversation available even before the first useful clue.
+    out.push({tag:'casual',topic:{kind:'casual',id:'mood'},text:'How are you holding up?',tone:'warm',kind:'Chat'});
+    out.push({tag:'casual',topic:{kind:'casual',id:'house'},text:'What do you make of this place?',tone:'warm',kind:'Chat'});
     out.push({ tag: "end", text: Math.random() < 0.5 && soulLine(me.id, "farewell") || choice(["I should be going.", "Excuse me.", "Let's talk later."]), tone: "leave", kind: "" });
     cv.options = cv.options || {};
     cv.options[me.id] = out;
@@ -2107,6 +2114,8 @@ export class Match {
         this.showDialogueRoll(c, other, "Deceive", roll, roll.success ? "Your reassurance sounds sincere." : "Your reassurance sounds rehearsed.");
         reaction = roll.success ? null : "bluffDoubt";
       }
+    } else if(opt.tag==='casual'){
+      cv.topic=opt.topic; if(!other.human)bumpTrust(other,c.id,.05);
     } else if (opt.tag === "ask") {
       const roll = this.dialogueRoll(c, other, "ask", Math.round(7 + trait(other.id, "skepticism") * 5));
       this.showDialogueRoll(c, other, "Ask", roll, roll.success ? "They consider the question." : "The question puts them on guard.");
@@ -2181,7 +2190,23 @@ export class Match {
     if (recent) intent.scene = factText(recent);
     if (cv.turns >= 7) {
       intent.kind = "goodbye"; intent.line = pick(LINES.bye);
-    } else if (testimony && !cv.witnessTold) {
+    } else if(last?.opt?.tag==='casual'){
+      intent.kind='casual';
+      const tense=/rattled|frightened|guarded|irritable|uneasy/.test(ai.temper||'');
+      intent.line=last.opt.topic.id==='mood'?(tense?"A little on edge, honestly. It helps to have someone to talk to.":"I'm managing, thank you. How are you holding up?"):"It's an imposing place. I'd rather have some company than wander it alone.";
+      cv.topic=null;
+    } else if(last?.opt?.topic?.kind==='activity'){
+      intent.kind='activity_answer';
+      const observed=last.opt.topic.observation||last.opt.look;
+      // Acknowledge the actual pre-conversation observation. Never replace an
+      // activity question with a random alibi or fabricate why they did it.
+      intent.line=`I was ${observed}.`;
+      const task=ai.task;
+      if(!ai.isKiller&&task&&!task.complete&&['bathroom','grime'].includes(task.id)&&/rag|towel|bleach/.test(observed))intent.line+=' I have some cleaning to finish.';
+      else if(/staring|looking|lingering/.test(observed))intent.line+=" It caught my attention; I can't tell you anything more about it.";
+      else intent.line+=" That's what you saw me doing just before we spoke.";
+      intent.question=last.opt.text;cv.topic=null;
+    } else if (testimony && !cv.witnessTold && last?.opt?.tag!=='ask') {
       cv.witnessTold = true;
       fact = testimony;
       intent.kind = "open_share";
@@ -2218,7 +2243,7 @@ export class Match {
       const willing = ai.isKiller || (ai.trust[human.id] || 0) > -2.5;
       if (!willing) { intent.kind = "deflect"; intent.line = pick(LINES.deflect); }
       else {
-        if (ai.isKiller && (topic?.kind === "where" || Math.random() < 0.5)) { fact = this.makeLie(ai, topic, human.id); lie = !!fact; }
+        if (ai.isKiller && topic?.kind === "where") { fact = this.makeLie(ai, topic, human.id); lie = !!fact; }
         if (!fact) fact = this.pickShareFact(ai, human.id, topic);
         if (fact) { intent.kind = "answer"; intent.line = claimLine(fact, ai.id); }
         else { intent.kind = "nothing"; intent.line = "I'm afraid I haven't noticed anything about that."; }

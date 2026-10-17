@@ -242,7 +242,7 @@ export class Avatar {
     this.root.updateMatrixWorld(true);
   }
 
-  update(dt, { x, z, yaw, mv, alive, anim, seat, seatH, pitch = 0, ko = false, conversing = false, listenYaw = 0, listenPitch = 0, wind }, snap = false) {
+  update(dt, { x, z, yaw, mv, alive, anim, seat, seatH, pitch = 0, ko = false, conversing = false, listenYaw = 0, listenPitch = 0, wind, deferHair=false }, snap = false) {
     this.t += dt;
     this.setGhost(!alive);
     const k = snap ? 1 : 1 - Math.exp(-dt * 14);
@@ -294,9 +294,9 @@ export class Avatar {
     this.model.position.set(0, y * (1 - e) + 0.11 * e, back * (1 - e) + 0.85 * e);
     this.root.updateMatrixWorld(true);
     if (wind !== undefined) this.hairMotion?.setWind(wind);
-    this.hairMotion?.update(dt, snap);
-    this.haircuts?.update(dt);
+    if(!deferHair)this.updateHair(dt,snap);
   }
+  updateHair(dt,snap=false){this.root.updateMatrixWorld(true);this.hairMotion?.update(dt,snap);this.haircuts?.update(dt);}
   get down() { return (this.koT || 0) > 0.5; }
 }
 
